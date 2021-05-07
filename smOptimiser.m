@@ -98,12 +98,20 @@ if ~isfield( setup, 'prcMaxLoss' )
    setup.prcMaxLoss = 100; % default
 end
 
+if ~isfield( setup, 'porousness' )
+   setup.porousness = 0.5; % default
+end
+
 if ~isfield( setup, 'verbose' )
    setup.verbose = 1; % default
 end
 
 if ~isfield( setup, 'constrain' )
    setup.constrain = 1; % default
+end
+
+if ~isfield( setup, 'quasiRandom' )
+   setup.quasiRandom = false; % default
 end
 
 
@@ -159,13 +167,14 @@ search.XTraceIndex = zeros( setup.nOuter*setup.nInner, nParams );
 search.YTrace = zeros( setup.nOuter*setup.nInner, 1 );
 
 opt.XTrace = table( ...
-                'Size', [setup.nOuter*setup.nInner, nParams], ...
+                'Size', [setup.nOuter, nParams], ...
                 'VariableTypes', paramInfo.varType, ...
                 'VariableNames', paramInfo.name );
 opt.XTraceIndex = zeros( setup.nOuter, nParams );
 opt.EstYTrace = zeros( setup.nOuter, 1 );
 opt.YCITrace = zeros( setup.nOuter, 1 );
 opt.noise = zeros( setup.nOuter, 1 );
+opt.modelSD = zeros( setup.nOuter, 1 );
 
 model = 0;
 optionsPSO = optimoptions('particleswarm', ...
@@ -174,6 +183,14 @@ optionsPSO = optimoptions('particleswarm', ...
                             'MaxIterations', setup.maxIter );
 optimumR = zeros( 1, nParams);
 
+if setup.quasiRandom
+    % generate a quasi-random sequence with required dimensions
+    rndSeq = haltonset( nParams, 'Skip', 1000, 'Leap', 100);
+    rndSeq = scramble( rndSeq, 'RR2' );
+    rndQ = qrandstream( rndSeq );
+else
+    rndQ = 0;
+end
 
 % start with the initial specified maximum
 maxLoss = setup.initMaxLoss;
@@ -189,7 +206,9 @@ for k = 1:setup.nOuter
             % random search
             [ params, indices ] = randomParams( ...
                                 paramDef, paramInfo, model, ...
-                                search.YTrace( 1:c ), maxLoss );     
+                                search.YTrace( 1:c ), ...
+                                maxLoss, setup.porousness, ...
+                                setup.maxTries, rndQ );     
         else
             % parameters at estimated optimum
             params = opt.XTrace( k-1, : );
@@ -208,15 +227,35 @@ for k = 1:setup.nOuter
         
     end
 
-    % fit the model this time
-    model = fitrgp(  ...
+    
+    
+    % fit the GP model to the observations
+    tic;
+    if k == 1
+        % first with no initial hyperparameters
+        model = fitrgp(  ...
                     search.XTraceIndex( 1:c, : ), ...
                     search.YTrace( 1:c ), ...
                     'CategoricalPredictors', paramInfo.isCat, ...
                     'BasisFunction', 'Constant', ... 
                     'KernelFunction', 'ARDMatern52', ...
-                    'Standardize', false ); 
-                
+                    'Standardize', false );
+    else
+        % use previously fitted hyperparameters as initial values
+        % which speeds up the fitting considerably
+        model = fitrgp(  ...
+                    search.XTraceIndex( 1:c, : ), ...
+                    search.YTrace( 1:c ), ...
+                    'CategoricalPredictors', paramInfo.isCat, ...
+                    'BasisFunction', 'Constant', ... 
+                    'KernelFunction', 'ARDMatern52', ...
+                    'Standardize', false, ...
+                    'Sigma', model.Sigma, ...
+                    'Beta', model.Beta, ...
+                    'KernelParameters', model.KernelInformation.KernelParameters );
+    end
+    
+    % find the global optimum with Particle Swarm Optimisation
     objFcn = @(p) roundParamsFn( model, p, paramInfo.isCat );
 
     optimum = particleswarm(    objFcn, ...
@@ -241,7 +280,7 @@ for k = 1:setup.nOuter
                     '; noise = ' num2str( opt.noise(k) )] );
     end
     
-    if setup.constrain == 1
+    if setup.constrain
         % restrict search to loss less than a
         % progressively reducing proportion of previous minimum
         alpha = setup.prcMaxLoss*(1 - k/setup.nOuter);
@@ -255,35 +294,54 @@ end
 
 
 
-function [ p, pIndex ] = randomParams( pDef, pInfo, model, YTrace, maxLoss )
+function [ p, pIndex ] = randomParams( pDef, pInfo, ...
+                                        model, YTrace, ...
+                                        maxLoss, porousness, ...
+                                        maxTries, rndQ )
 
     nVar = length( pDef );
     pIndex = zeros( 1, nVar );
+    
+    useQuasiRandomSeq = isa( rndQ, 'qrandstream' );
+    useGPModel = isa( model, 'RegressionGP' );
+    
+    if useGPModel
+        % calculate width of acceptance probability drop-off
+        sigma = porousness*std( YTrace );
+    end
 
     inRange = false;
+    nTries = 0;
     while ~inRange
 
+        if useQuasiRandomSeq
+            % generate quasi-random set of numbers
+            r = qrand( rndQ );
+        else
+            % generate pseudo-random set of numbers
+            r = rand( nVar );
+        end
+        
         % randomly select the parameter values
         % only categorical parameters are granular
-        % numerical parameters are real or integer
+        % numerical parameters are real or integer       
         for i = 1:nVar
             switch pDef(i).Type
                 case 'categorical'
-                    pIndex(i) = randi( pInfo.nLevels(i) );
+                    pIndex(i) = rndInt( pInfo.nLevels(i), r(i) );
                     p.(pDef(i).Name) = categorical( ...
                                             pDef(i).Range( pIndex(i) ) );
                 case 'integer'
-                    pIndex(i) = randi( pInfo.nLevels(i) );
+                    pIndex(i) = rndInt( pInfo.nLevels(i), r(i) );
                     p.(pDef(i).Name) = pIndex(i);
                 case 'real'
-                    pIndex(i) = pInfo.lowerBound(i)+ ...
-                             rand*( pInfo.upperBound(i)- ...
-                                      - pInfo.lowerBound(i) );
+                    pIndex(i) = rndReal( pInfo.lowerBound(i), ...
+                                         pInfo.upperBound(i), r(i) );
                     p.(pDef(i).Name) = pIndex(i);
             end               
         end
 
-        if isa( model, 'RegressionGP' )
+        if useGPModel
             % model exists (after first iteration)
             % get prediction of what this model error would be
             estLoss = predict( model, pIndex );
@@ -291,9 +349,7 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, model, YTrace, maxLoss )
                 inRange = true;
             else
                 % compute probability of accepting params
-                % based on normal distribution of
-                % sigma = half the SD of observations
-                sigma = 0.5*std( YTrace );
+                % based on a normal distribution
                 pAccept = exp(-0.5*((estLoss-maxLoss)/sigma)^2);
                 inRange = rand<pAccept;
             end
@@ -302,11 +358,36 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, model, YTrace, maxLoss )
             % no objective model yet (first iteration)
             inRange = true;
         end
+        
+        nTries = nTries+1;
+        if mod( nTries, maxTries )==0
+            % double the probability acceptance width
+            % to increase chances of finding an acceptable point
+            sigma = sigma*2;
+        end
     
-    end
+    end       
     
     p = struct2table( p );
     
+end
+
+
+function i = rndInt( range, rnd )
+
+% Generate a random integer in the range 1..rng
+
+i = round( range*rnd-0.5)+1;
+
+end
+
+
+function r = rndReal( lower, upper, rnd )
+
+% Generate a random real in the range lower..upper
+
+r = lower+(upper-lower)*rnd;
+
 end
 
 
