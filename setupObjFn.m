@@ -76,6 +76,15 @@ switch name
             
         objFn = @objFnMultiDimTest5;
         
+    
+    case 'Averager'
+        
+        varDef(1) = optimizableVariable( 'v', ...
+                [-3 3], ...
+                'Type', 'real' );
+        
+        objFn = @objFnAverager;
+        
         
     otherwise
         

@@ -12,8 +12,8 @@ method = 'smOptimiser';
 
 % optimiser setup
 
-optSetup.nOuter = 10;
-optSetup.nInner = 5;
+optSetup.nFit = 20;
+optSetup.nSearch = 20;
 optSetup.initMaxLoss = 100; 
 optSetup.maxTries = 100;
 optSetup.tolPSO = 0.01;

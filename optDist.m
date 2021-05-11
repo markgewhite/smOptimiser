@@ -9,23 +9,27 @@ clear;
 
 method = 'smOptimiser';
 
-optSetup.initMaxLoss = 100; 
-optSetup.maxTries = 50;
-optSetup.tolPSO = 0.01;
-optSetup.tolFMin = 0.001;
-optSetup.maxIter = 10000;
-optSetup.verbose = 0;
-optSetup.quasiRandom = false;
+optimizer.initMaxLoss = 100; 
+optimizer.maxTries = 50;
+optimizer.tolPSO = 0.01;
+optimizer.tolFMin = 0.001;
+optimizer.maxIter = 10000;
+optimizer.verbose = 0;
+optimizer.quasiRandom = false;
 
-optSetup.nOuter = 20; 
-optSetup.nInner = 40; 
-optSetup.prcMaxLoss = 25;
-optSetup.constrain = true;
-optSetup.porousness = 0.5;
+optimizer.nFit = 40; 
+optimizer.nSearch = 10; 
+optimizer.prcMaxLoss = 25;
+optimizer.constrain = true;
+optimizer.porousness = 0.5;
+
+optimizer.showPlots = true;
+optimizer.useSubPlots = true;
 
 nRepeats = 10;
 resolution = 0.1;
-nInterTrace = fix( 0.25*optSetup.nOuter );
+nInterTrace = fix( 0.25*optimizer.nOuter );
+
 
 
 [ objFn, varDef ] = setupObjFn( 'MultiDimTest5' );
@@ -34,51 +38,36 @@ nInterTrace = fix( 0.25*optSetup.nOuter );
 
 nParams = length( varDef );
 
-optTrace = zeros( nRepeats*nInterTrace, nParams );
-pRange = 0:resolution:180;
-yPDF = zeros( length(pRange), nParams );
+optTrace = setupOptTable( varDef, nRepeats*nInterTrace );
+optimum = setupOptTable( varDef, nRepeats );
 
-figure;
 c = 0;
+groups = zeros( nRepeats*nInterTrace, 1 );
+outputFigures = [];
 for i = 1:nRepeats
 
     switch method
         case 'Bayesopt'
             output = bayesopt( objFn, varDef, ...
                         'MaxObjectiveEvaluations', ...
-                                optSetup.nOuter*optSetup.nInner/2, ...
+                                optimizer.nOuter*optimizer.nInner/2, ...
                         'PlotFcn', [], ...
                         'Verbose', 0 );
-            optTrace( i,: ) = table2array( output.XAtMinObjective );
-        case 'smOptimiser'
-            [ ~, ~, optOutput ] = smOptimiser( objFn, varDef, optSetup );
             optTrace( (i-1)*nInterTrace+1:i*nInterTrace, : ) ...
-                        = optOutput.XTraceIndex( end-nInterTrace+1:end, :);
+                        = output.XAtMinObjective( end-nInterTrace+1:end, :);
+                    
+        case 'smOptimiser'
+            [ ~, ~, optOutput ] = smOptimiser( objFn, varDef, optimizer );
+            optTrace( (i-1)*nInterTrace+1:i*nInterTrace, : ) ...
+                        = optOutput.XTrace( end-nInterTrace+1:end, :);
+                    
     end
+       
+    [optimum(i,:), ~, outputFigures] = ...
+        identifyOptimum(    optTrace(1:i*nInterTrace,:), ...
+                            varDef, optimizer, outputFigures );
     
-    for j = 1:nParams
-        pdist = fitdist( optTrace( 1:i*nInterTrace, j ) , ...
-                            'Kernel', 'Kernel', 'Normal' );
-        yPDF(:,j) = pdf( pdist, pRange );
-        yPDF(:,j) = yPDF(:,j)./sum( yPDF(:,j) );
-        
-        plot( pRange, yPDF(:,j), 'LineWidth', 1 );
-        hold on;
-    end
-    hold off;
-    xlabel( 'Parameter' );
-    ylabel( 'Probability Density' );
-    drawnow;
-    
-
 end
 
-disp(['Percentile MaxLoss = ' num2str(optSetup.prcMaxLoss)]);
-disp(['Porousness = ' num2str(optSetup.porousness)]);
-for j = 1:nParams
-    [pks, locs ] = findpeaks( yPDF(:,j), 'MinPeakProminence', 0.0002 );
-    disp(['Parameter ' num2str(j) ': ' ...
-          ': Loc = ' num2str( pRange(locs) ) ...
-          '; Peak = ' num2str( pks' ) ]);
-end
+
 

@@ -23,9 +23,9 @@ switch x.colour
     case 'Red'
         f1 = 1;
     case 'Green'
-        f1 = 3;
+        f1 = 1.3;
     case 'Blue'
-        f1 = 2;
+        f1 = 1.1;
     otherwise
         f1 = 0;
 end
@@ -43,6 +43,8 @@ end
 
 % calculate function
 value = f2*sin( x.frequency*x.step*pi/180 )+f1;
+
+value = value + normrnd( 0, 0.5 );
 
 end
 

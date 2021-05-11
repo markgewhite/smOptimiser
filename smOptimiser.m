@@ -23,9 +23,8 @@
 %                               used by bayesopt
 %
 %           setup:              optimiser's setup
-%               .nOuter:        number of outer iterations (default = 100)
-%               .nInner:        after every nInner iterations make
-%                               observation at the previously estimated
+%               .nFit:          number of model fits (default = 100)
+%               .nSearch:       number of observations before next fit
 %                               optimum (default = 20)
 %               .maxTries:      maximum number of times to try a random
 %                               choice of parameter values that satisfies
@@ -42,36 +41,43 @@
 %               .verbose        output level: (optional; default = 1)
 %                                   0 = no output; 1 = commandline output
 %
+%           data:               data if required for the objective function
+%                               (optional)
+%
+%           options:            options structure if required for the
+%                               objective function (options)
+%
 % Output:
-%           optimum:        optimal parameters for the objective function
-%           model:          Bayesian surrogate model structure
-%           opt:            optimisation record structure (PSO)
-%           search:         random search record sructure
+%           optimum:            optimal parameters for the objective function
+%           model:              Bayesian surrogate model structure
+%           opt:                optimisation record structure (PSO)
+%           search:             random search record sructure
 %
 % ************************************************************************
 
-function [ optimum, model, opt, search ] = smOptimiser( objFn, paramDef, setup )
+function [ optimum, model, opt, search ] = ...
+    smOptimiser( objFn, paramDef, setup, data, options )
 
 
 % parse arguments
-if nargin ~= 3
-    error('Three arguments not specified.');
+if nargin < 3
+    error('Minimum of three arguments not specified.');
 end
 
-if isfield( setup, 'nOuter' )
-    if setup.nOuter <= 0 || isinteger( setup.nOuter )
-        error('Setup: nOuter must be a positive integer.');
+if isfield( setup, 'nFit' )
+    if setup.nFit <= 0 || isinteger( setup.nFit )
+        error('Setup: nFit must be a positive integer.');
     end
 else
-   setup.nOuter = 100; % default
+   setup.nFit = 100; % default
 end
 
-if isfield( setup, 'nInner' )
-    if setup.nInner <= 0 || isinteger( setup.nInner )
-        error('Setup: nInner must be a positive integer.');
+if isfield( setup, 'nSearch' )
+    if setup.nSearch <= 0 || isinteger( setup.nSearch )
+        error('Setup: nSearch must be a positive integer.');
     end
 else
-   setup.nInner = 20; % default
+   setup.nSearch = 20; % default
 end
 
 if isfield( setup, 'maxTries' )
@@ -113,6 +119,11 @@ end
 if ~isfield( setup, 'quasiRandom' )
    setup.quasiRandom = false; % default
 end
+
+
+setup.noObjOptions = (nargin < 5);
+setup.noObjData = (nargin < 4);
+
 
 
 nParams = length( paramDef );
@@ -160,21 +171,21 @@ end
 
 % initialisation
 search.XTrace = table( ...
-                'Size', [setup.nOuter*setup.nInner, nParams], ...
+                'Size', [setup.nFit*setup.nSearch, nParams], ...
                 'VariableTypes', paramInfo.varType, ...
                 'VariableNames', paramInfo.name );
-search.XTraceIndex = zeros( setup.nOuter*setup.nInner, nParams );
-search.YTrace = zeros( setup.nOuter*setup.nInner, 1 );
+search.XTraceIndex = zeros( setup.nFit*setup.nSearch, nParams );
+search.YTrace = zeros( setup.nFit*setup.nSearch, 1 );
 
 opt.XTrace = table( ...
-                'Size', [setup.nOuter, nParams], ...
+                'Size', [setup.nFit, nParams], ...
                 'VariableTypes', paramInfo.varType, ...
                 'VariableNames', paramInfo.name );
-opt.XTraceIndex = zeros( setup.nOuter, nParams );
-opt.EstYTrace = zeros( setup.nOuter, 1 );
-opt.YCITrace = zeros( setup.nOuter, 1 );
-opt.noise = zeros( setup.nOuter, 1 );
-opt.modelSD = zeros( setup.nOuter, 1 );
+opt.XTraceIndex = zeros( setup.nFit, nParams );
+opt.EstYTrace = zeros( setup.nFit, 1 );
+opt.YCITrace = zeros( setup.nFit, 1 );
+opt.noise = zeros( setup.nFit, 1 );
+opt.modelSD = zeros( setup.nFit, 1 );
 
 model = 0;
 optionsPSO = optimoptions('particleswarm', ...
@@ -197,9 +208,9 @@ maxLoss = setup.initMaxLoss;
 % full iteration counter
 c = 0; 
 
-for k = 1:setup.nOuter
+for k = 1:setup.nFit
 
-    for j = 1:setup.nInner
+    for j = 1:setup.nSearch
         
         % determine the random parameters
         if j > 1 || k == 1
@@ -217,7 +228,13 @@ for k = 1:setup.nOuter
         end
     
         % run the model for this set of parameters
-        obs = objFn( params );
+        if setup.noObjData && setup.noObjOptions
+            obs = objFn( params );
+        elseif setup.noObjOptions
+            obs = objFn( params, data );
+        else
+            obs = objFn( params, data, options );
+        end
 
         % record observation
         c = c+1;
@@ -283,7 +300,7 @@ for k = 1:setup.nOuter
     if setup.constrain
         % restrict search to loss less than a
         % progressively reducing proportion of previous minimum
-        alpha = setup.prcMaxLoss*(1 - k/setup.nOuter);
+        alpha = setup.prcMaxLoss*(1 - k/setup.nFit);
         maxLoss = prctile( search.YTrace(1:c), alpha );
     end
         
