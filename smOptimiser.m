@@ -124,8 +124,15 @@ end
 setup.noObjOptions = (nargin < 5);
 setup.noObjData = (nargin < 4);
 
+if setup.verbose > 0
+    setup.useSubPlots = true;
+    figDist = [];
+    figSearch = [];
+    figPerf = [];
+end
 
-
+% identify only the active variables requiring optimisation
+paramDef = paramDef( activeVarDef(paramDef) );
 nParams = length( paramDef );
 
 % add extra definitions (for speed)
@@ -176,6 +183,7 @@ search.XTrace = table( ...
                 'VariableNames', paramInfo.name );
 search.XTraceIndex = zeros( setup.nFit*setup.nSearch, nParams );
 search.YTrace = zeros( setup.nFit*setup.nSearch, 1 );
+search.objFnTime = zeros( setup.nFit*setup.nSearch, 1 );
 
 opt.XTrace = table( ...
                 'Size', [setup.nFit, nParams], ...
@@ -186,6 +194,8 @@ opt.EstYTrace = zeros( setup.nFit, 1 );
 opt.YCITrace = zeros( setup.nFit, 1 );
 opt.noise = zeros( setup.nFit, 1 );
 opt.modelSD = zeros( setup.nFit, 1 );
+opt.fitTime = zeros( setup.nFit, 1 );
+opt.psoTime = zeros( setup.nFit, 1 );
 
 model = 0;
 optionsPSO = optimoptions('particleswarm', ...
@@ -228,6 +238,7 @@ for k = 1:setup.nFit
         end
     
         % run the model for this set of parameters
+        tic;
         if setup.noObjData && setup.noObjOptions
             obs = objFn( params );
         elseif setup.noObjOptions
@@ -238,9 +249,14 @@ for k = 1:setup.nFit
 
         % record observation
         c = c+1;
+        search.objFnTime( c ) = toc;
         search.YTrace( c ) = obs;
         search.XTrace( c, : ) = params;
         search.XTraceIndex( c, : ) = indices;
+        
+        %if setup.verbose > 0
+        %    disp(['  Actual Model: Loss = ' num2str( obs )]);
+        %end
         
     end
 
@@ -260,7 +276,15 @@ for k = 1:setup.nFit
     else
         % use previously fitted hyperparameters as initial values
         % which speeds up the fitting considerably
-        model = fitrgp(  ...
+        
+        % check first if the number of predictors has changed
+        % as with categorical variables there can be more dummy variables
+        nPredictors = numPredictors( search.XTraceIndex( 1:c, : ), ...
+                                     paramInfo.isCat );
+        if nPredictors == ...
+                length( model.KernelInformation.KernelParameters )-1
+            
+            model = fitrgp(  ...
                     search.XTraceIndex( 1:c, : ), ...
                     search.YTrace( 1:c ), ...
                     'CategoricalPredictors', paramInfo.isCat, ...
@@ -270,16 +294,33 @@ for k = 1:setup.nFit
                     'Sigma', model.Sigma, ...
                     'Beta', model.Beta, ...
                     'KernelParameters', model.KernelInformation.KernelParameters );
+                
+        else
+            % cannot use the previous kernel parameters
+            model = fitrgp(  ...
+                    search.XTraceIndex( 1:c, : ), ...
+                    search.YTrace( 1:c ), ...
+                    'CategoricalPredictors', paramInfo.isCat, ...
+                    'BasisFunction', 'Constant', ... 
+                    'KernelFunction', 'ARDMatern52', ...
+                    'Standardize', false, ...
+                    'Sigma', model.Sigma, ...
+                    'Beta', model.Beta );
+        
+        end
     end
+    opt.fitTime( k ) = toc;
     
     % find the global optimum with Particle Swarm Optimisation
     objFcn = @(p) roundParamsFn( model, p, paramInfo.isCat );
 
+    tic;
     optimum = particleswarm(    objFcn, ...
                                 nParams, ...
                                 paramInfo.lowerBound, ...
                                 paramInfo.upperBound, ...
                                 optionsPSO );
+    opt.psoTime( k ) = toc;
 
     optimumR( paramInfo.doRounding ) = round( optimum( paramInfo.doRounding ) );
     optimumR( ~paramInfo.doRounding ) = optimum( ~paramInfo.doRounding );
@@ -287,15 +328,7 @@ for k = 1:setup.nFit
     opt.XTrace( k, : ) = convParams( optimumR, paramDef, paramInfo );  
     opt.XTraceIndex( k, : ) = optimumR;
     opt.noise( k ) = model.Sigma;
-    [ opt.EstYTrace( k ), opt.modelSD( k ) ] = predict( model, optimum );
-
-    
-    if setup.verbose > 0
-        disp(['Particle Swarm Optimum = ' num2str( optimumR ) ...
-            '; Surogate Model: Loss = ' num2str( opt.EstYTrace(k) ) ...
-                    ' +/- ' num2str( opt.YCITrace(k) ) ...
-                    '; noise = ' num2str( opt.noise(k) )] );
-    end
+    [ opt.EstYTrace( k ), opt.modelSD( k ) ] = predict( model, optimumR );
     
     if setup.constrain
         % restrict search to loss less than a
@@ -303,6 +336,26 @@ for k = 1:setup.nFit
         alpha = setup.prcMaxLoss*(1 - k/setup.nFit);
         maxLoss = prctile( search.YTrace(1:c), alpha );
     end
+    
+    % make interim reports
+    if setup.verbose > 0
+        disp(['Surogate Model: Loss = ' num2str( opt.EstYTrace(k) ) ...
+                    ' +/- ' num2str( opt.YCITrace(k) ) ...
+                    '; noise = ' num2str( opt.noise(k) )] );
+    end
+    if setup.verbose > 1
+        [ opt.XDistPeak( k, : ), ~, figDist ] = plotOptDist( ...
+                         opt.XTrace( 1:k, : ), ...
+                         paramDef, setup, figDist );
+    end
+    if setup.verbose > 2
+        figSearch = plotOptSearch( search.XTraceIndex, opt.XTraceIndex, ...
+                                    paramDef, figSearch );
+    end
+    if setup.verbose > 3
+        figPerf = plotOptPerf( search, opt, figPerf );
+    end
+
         
 end
 
@@ -442,3 +495,11 @@ X = struct2table( X );
 end
 
 
+function nPred = numPredictors( data, isCat )
+
+nCat = size( dummyvar( data(:,isCat) ), 2 );
+nNotCat = length( isCat ) - sum( isCat );
+
+nPred = nCat + nNotCat;
+
+end

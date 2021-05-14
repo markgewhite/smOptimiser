@@ -16,13 +16,15 @@
 
 function optTable = setupOptTable( varDef, nRows )
 
-nVars = length( varDef );
+activeVar = activeVarDef( varDef );
+nVars = length( activeVar );
+
 varType = strings( nVars, 1 );
 varName = strings( nVars, 1 );
 
 for i = 1:nVars
-   varName{i} = varDef(i).Name;
-   switch varDef(i).Type
+   varName{i} = varDef( activeVar(i) ).Name;
+   switch varDef( activeVar(i) ).Type
        case {'real','integer'}
            varType{i} = 'double';
        case 'categorical'

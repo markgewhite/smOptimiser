@@ -48,63 +48,97 @@ function [ optTrace, valResult ] = smOptimiserNCV( ...
 
 % partition the data (outer)
 
-[ trnSelect, valSelect ] = partitionData(  data.outcome, ...
-                                           data.subject, ...
-                                           options.part.select );
+[ trnSelect, valSelect ] = partitionData(  (1:setup.nObs)', ...
+                                           setup.subjects, ...
+                                           setup.partitioning );
 
-% initialise
-                                       
-nOuter = options.part.select.kFolds;
-nObs = nOuter*setup.nRepeats*setup.nInterTrace;
+% shorthand
+nOuter = setup.partitioning.iterations;
+nInner = setup.nFit;
+nRepeats = setup.nRepeats;
+nInter = setup.nInterTrace;
 
-optTraceFull = setupOptTable( paramDef, nObs );
-optTrace = setupOptTable( paramDef, nOuter*setup.nRepeats );
+% initialise tables for recording optimisations
+optTraceFull = setupOptTable( paramDef, nOuter*nRepeats*nInner );
+optTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
+optFold = zeros( nOuter*nRepeats*nInter, 1 );
+optTrace = setupOptTable( paramDef, nOuter );
 
+
+% initialise arrays recording diagnostics and results
 valResult = zeros( nOuter, 1 );
 
-outputFigures = [];
+% initialise counters
+a0 = 0;
+a1 = 0;
+c0 = 0;
+c1 = 0;
+m = 0;
 
+summaryFig = []; % new figure for each outer iteration
 
 % loop over outer partitions
-
-c0 = 1;
-c1 = setup.nInterTrace;
-m = 0;
 for i = 1:nOuter
+    
+    disp(['Outer Iteration = ' num2str(i)]);
     
     if isa( data, 'struct')
         % data is structured so extract the subset from each field
-        trnData = dataStructExtract( data, trnSelect(i,:) );
-        valData = dataStructExtract( data, valSelect(i,:) );
+        trnData = dataStructExtract( data, trnSelect(:,i) );
+        valData = dataStructExtract( data, valSelect(:,i) );
     else
         % assumed to be a table or array
-        trnData = data( trnSelect(i,:), : );
-        valData = data( trnSelect(i,:), : );
+        trnData = data( trnSelect(:,i), : );
+        valData = data( trnSelect(:,i), : );
     end
+       
+    % repeat runs on inner partitions
+    for j = 1:nRepeats
         
-    for j = 1:setup.nRepeats
+        disp(['Inner Repeat = ' num2str(j)]);
         
         [ ~, ~, optOutput ] = smOptimiser( objFcn, paramDef, setup, ...
                                            trnData, ...
                                            options );
-       
-        optTraceFull( c0:c1, : ) = ...
-                        optOutput.XTrace( end-setup.nInterTrace+1:end, :);
-
-        m = m + 1;
-        [optTrace(m,:), ~, outputFigures] = identifyOptimum( ...
-                                                optTraceFull(1:c1,:), ...
-                                                paramDef, ...
-                                                setup, ...
-                                                outputFigures );
-        
+        % update counters
+        a0 = a1 + 1;
+        a1 = a1 + nInner;
         c0 = c1 + 1;
-        c1 = c1 + setup.nInterTrace;
-        
+        c1 = c1 + nInter;
+                                       
+        optTraceFull( a0:a1, : ) = optOutput.XTrace;
+        optTraceInter( c0:c1, : ) = ...
+                        optOutput.XTrace( end-nInter+1:end, :);
+        optFold( c0:c1 ) = i;
+              
     end
     
-    valResult(i) = objFcn( optTrace(m,:), valData, options );
+    m = m + 1;
+    % determine optimal parameters for this outer fold
+    % temporarily disable plotting
+    temp = setup.showPlots;
+    setup.showPlots = false;
+    optTrace(m,:) = plotOptDist( ...
+                                optTraceInter(c1-nRepeats*nInter+1:c1,:), ...
+                                paramDef, ...
+                                setup, ...
+                                [] );
+    setup.showPlots = temp;
     
+    valResult(i) = objFcn( optTrace(m,:), ...
+                           data, ...
+                           options, ...
+                           trnSelect(:,i) );
+    
+    disp(['Outer Validation Error = ' num2str( valResult(i) )]);
+    
+    % plot over distribution for all folds up to this point
+    [ ~, ~, summaryFig ]= plotOptDist( ...
+                                optTraceInter(1:c1,:), ...
+                                paramDef, ...
+                                setup, ...
+                                summaryFig, ...
+                                optFold(1:c1) );
     
 end
 
@@ -120,7 +154,7 @@ subset = data;
 for i = 1:length(flds)
     if isa( data.(flds{i}), 'struct' )
         subset.(flds{i}) = dataStructExtract( data.(flds{i}), rows );
-    else
+    elseif length( rows ) == length( subset.(flds{i}) )
         subset.(flds{i}) = subset.(flds{i})( rows, : );
     end
 end

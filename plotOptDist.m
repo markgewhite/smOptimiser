@@ -1,6 +1,7 @@
 % ************************************************************************
-% Function: identifyOptimum
-% Purpose:  Identifies the optimum  from an optimisation trace.
+% Function: plotOptDist
+% Purpose:  Plot the parameter distributions from an optimisation trace.
+%           At the same time, identify the peak distibution values.
 %           For categorical variables it is the value with the highest
 %           frequency. For continuous variables in the highest peak of a 
 %           probability density function.
@@ -14,7 +15,7 @@
 %           varDef:             variable definitions - a cell array of
 %                               optimizableVariables
 %
-%           opt                 options
+%           setup               options
 %               .nLast:         number of observations to include from
 %                               the end of the each trace grouping;
 %                               if 0 then include all observations
@@ -38,7 +39,7 @@
 % ************************************************************************
 
 function [ XOptimum, XFreq, figRef ] = ...
-                identifyOptimum( XTrace, varDef, opt, figRef, group )
+                plotOptDist( XTrace, varDef, setup, figRef, group )
             
 % parse arguments
 if nargin < 2
@@ -46,56 +47,62 @@ if nargin < 2
 end
 
 if nargin < 3
-	opt.notSpecified = true;
+	setup.notSpecified = true;
 end
 
 
 % set option defaults where required
-if isfield( opt, 'nLast' )
-    if opt.nLast <= 0 || isinteger( opt.nLast )
+if isfield( setup, 'nLast' )
+    if setup.nLast <= 0 || isinteger( setup.nLast )
         error('Options: nLast must be a positive integer.');
     end
 else
-    opt.nLast = 0; % default
+    setup.nLast = 0; % default
 end
 
-if isfield( opt, 'showPlots' )
-    if ~islogical( opt.showPlots )
+if isfield( setup, 'showPlots' )
+    if ~islogical( setup.showPlots )
         error('Options: showPlots must be Boolean.');
     end
 else
-    opt.showPlots = false; % default
+    setup.showPlots = false; % default
 end
 
-if isfield( opt, 'useGroups' )
-    if ~islogical( opt.showPlots )
+if isfield( setup, 'useGroups' )
+    if ~islogical( setup.showPlots )
         error('Options: useGroups must be Boolean.');
     end
 else
-    opt.useGroups = false; % default
+    setup.useGroups = false; % default
 end
 
 % get dimensions
 [nObs, nVar] = size( XTrace );
 
-if opt.showPlots && isempty( figRef )
-    % setup figures
-    if opt.useSubPlots
-        figure;
-        [ plotRows, plotCols ] = sqdim( nVar );
-        for i = 1:nVar
-            figRef(i) = subplot( plotRows, plotCols, i );
+
+% extract only the active variables
+varDef = varDef( activeVarDef(varDef) );
+if nVar ~= length( varDef )
+    error('The number optimizable variables (varDef) does not match the XTrace');
+end
+
+if setup.showPlots
+    [ plotRows, plotCols ] = sqdim( nVar );
+    if isempty( figRef )
+        % setup figures - one time only
+        if setup.useSubPlots
+            figRef = figure;
+        else
+            figRef = gobjects( nVar, 1 );
+            for i = 1:nVar
+                figRef(i) = figure;
+            end   
         end
-    else
-        figRef = gobjects( nVar, 1 );
-        for i = 1:nVar
-            figRef(i) = figure;
-        end   
     end
 end
 
 if nargin < 5
-    group = zeros( nObs, 1 ); % default
+    group = ones( nObs, 1 ); % default
 end
 
 % identify unique group identifiers
@@ -110,9 +117,10 @@ XOptimum = XTrace(1,:); % (the actual values with be updated)
 XFreq = zeros( 1, size(XOptimum,2) );
 
 nPts = 401;
-if opt.useSubPlots
+if setup.useSubPlots
 
 end
+
 
 for i = 1:nVar
     
@@ -130,11 +138,12 @@ for i = 1:nVar
         XOptimum.(varName)(1) = cTable.(varName)(topLoc);
         XFreq(1,i) = topFreq/nObs;        
     
-        if opt.showPlots
-            if isa( figRef(i), 'matlab.ui.Figure' )
-                figure( figRef(i) );
+        if setup.showPlots
+            if setup.useSubPlots
+                figure( figRef );
+                subplot( plotRows, plotCols, i );
             else
-                subplot( figRef(i) );
+                figure( figRef(i) );
             end
             plotFreq( XTrace, varDef(i) );
         end
@@ -162,11 +171,12 @@ for i = 1:nVar
         XOptimum.(varName)(1) = XFit( topLoc );
         XFreq(1,i) = topFreq/YTotal;        
     
-        if opt.showPlots
-            if isa( figRef(i), 'matlab.ui.Figure' )
-                figure( figRef(i) );
+        if setup.showPlots
+            if setup.useSubPlots
+                figure( figRef );
+                subplot( plotRows, plotCols, i );
             else
-                subplot( figRef(i) );
+                figure( figRef(i) );
             end
             if nGroups == 1
                 plotPDF( YAll, varDef(i), ...
@@ -187,43 +197,48 @@ XOptimum = XOptimum( :, 1:end-1 );
 end
 
 
+
 function plotFreq( X, varDef )
  
     colourRGB = getColours;
-
-    nGroups = length( unique(X.groupVar) );
-
+    nCol = size( colourRGB, 1 );
+    
+    uniqueGroups = unique(X.groupVar);
+    nGroups = length( uniqueGroups );
+    nCat = length( varDef.Range );
+    
+    % insert all categories at the beginning to ensure all are present
+    XInsert = repelem( X(1,:), nCat*nGroups, 1 );
+    for i = 1:nCat
+        for j = 1:nGroups
+            XInsert.(varDef.Name)( (i-1)*nGroups+j ) = varDef.Range{i};
+            XInsert.groupVar( (i-1)*nGroups+j ) = uniqueGroups(j);
+        end
+    end
+        
     % count the number of models for ith var, grouped by fold
-    cTable = groupcounts( X, {varDef.Name, 'groupVar'} );
+    cTable = groupcounts( [X; XInsert], {varDef.Name, 'groupVar'} );
+    
+    % sort into standard order by adding numeric category
+    cTable.level = zeros( height(cTable), 1 );
+    for i = 1:height(cTable)
+        cTable.level(i) = find( cTable.(varDef.Name)(i)==varDef.Range );
+    end
+    cTable = sortrows( cTable, 'level' );
 
-    % extract the totals
-    c = cTable.GroupCount;
+    % extract the totals remembering that extras were added
+    c = cTable.GroupCount-1;
 
     % convert to percentages
     cPct = 100*c./sum( c, 'all' );
     
-    % first add any missing values from full range
-    varMiss = setdiff( categorical(varDef.Range), cTable.(varDef.Name) );
-    if ~isempty( varMiss )
-        varMissID = find( varMiss==varDef.Range );
-        for i = varMissID(1):varMissID(end)
-            if i < length(varDef.Range)
-                % shift rows down
-                cPct( i+1:end+1, : ) = cPct( i:end, : );
-            end
-            % insert blank row
-            cPct( i, : ) = zeros( 1, nGroups );
-        end
-    end
-    
     % reshape the array for a stacked bar chart
-    c = reshape( c, nGroups, length(c)/nGroups )';
+    cPct = reshape( cPct, nGroups, nCat )';
     
     % now plot the chart
-    barObj = bar( cPct, 'Stacked', 'LineWidth', 1.5 );
-    nColours = min( length(barObj), length(colourRGB) );
-    for i = 1:nColours
-        barObj(i).FaceColor = colourRGB( i, : );
+    barObj = bar( cPct, 'Stacked', 'LineWidth', 1 );
+    for i = 1:nGroups
+        barObj(i).FaceColor = colourRGB( mod(i-1,nCol)+1, : );
     end
 
     xticklabels( varDef.Range );
@@ -256,6 +271,8 @@ end
 function plotLayeredPDF( X, varDef, XFit, YTotal )
 
     colourRGB = getColours;
+    nCol = size( colourRGB, 1 );
+    
     nPts = length( XFit );
 
     XPlot = linspace( varDef.Range(1), varDef.Range(2), nPts )';
@@ -267,7 +284,6 @@ function plotLayeredPDF( X, varDef, XFit, YTotal )
     groupLabels = unique( X.groupVar );
     nObs = size( X, 1 );
 
-    hold on;
     for j = 1:length( groupLabels )
         % select fold data for ith variable
         grpRows = (X.groupVar==groupLabels(j));
@@ -281,8 +297,9 @@ function plotLayeredPDF( X, varDef, XFit, YTotal )
         Y = pdf( YPDF, XFit )*YProp/YTotal;
 
         % draw shaded area
-        YRev= [ Y+Y0; flipud(Y0) ];            
-        fill( XRev, YRev, colourRGB(j,:), 'LineWidth', 1 );
+        YRev= [ Y+Y0; flipud(Y0) ];
+        fill( XRev, YRev, colourRGB( mod(j-1,nCol)+1,:), 'LineWidth', 1 );
+        hold on;
 
         % set new baseline for next loop
         Y0 = Y0+Y;
