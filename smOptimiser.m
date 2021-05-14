@@ -56,7 +56,7 @@
 % ************************************************************************
 
 function [ optimum, model, opt, search ] = ...
-    smOptimiser( objFn, paramDef, setup, data, options )
+                    smOptimiser( objFn, paramDef, setup, data, options )
 
 
 % parse arguments
@@ -192,6 +192,8 @@ opt.XTrace = table( ...
 opt.XTraceIndex = zeros( setup.nFit, nParams );
 opt.EstYTrace = zeros( setup.nFit, 1 );
 opt.YCITrace = zeros( setup.nFit, 1 );
+opt.ObsYTrace = zeros( setup.nFit, 1 );
+
 opt.noise = zeros( setup.nFit, 1 );
 opt.modelSD = zeros( setup.nFit, 1 );
 opt.fitTime = zeros( setup.nFit, 1 );
@@ -222,29 +224,34 @@ for k = 1:setup.nFit
 
     for j = 1:setup.nSearch
         
-        % determine the random parameters
-        if j > 1 || k == 1
-            % random search
-            [ params, indices ] = randomParams( ...
-                                paramDef, paramInfo, model, ...
-                                search.YTrace( 1:c ), ...
-                                maxLoss, setup.porousness, ...
-                                setup.maxTries, rndQ );     
-        else
-            % parameters at estimated optimum
-            params = opt.XTrace( k-1, : );
-            indices = opt.XTraceIndex( k-1, : );
+        obs = NaN;
+        while isnan( obs )
+        
+            % determine the random parameters
+            if j > 1 || k == 1
+                % random search
+                [ params, indices ] = randomParams( ...
+                                    paramDef, paramInfo, model, ...
+                                    search.YTrace( 1:c ), ...
+                                    maxLoss, setup.porousness, ...
+                                    setup.maxTries, rndQ );     
+            else
+                % parameters at estimated optimum
+                params = opt.XTrace( k-1, : );
+                indices = opt.XTraceIndex( k-1, : );
 
-        end
-    
-        % run the model for this set of parameters
-        tic;
-        if setup.noObjData && setup.noObjOptions
-            obs = objFn( params );
-        elseif setup.noObjOptions
-            obs = objFn( params, data );
-        else
-            obs = objFn( params, data, options );
+            end
+
+            % run the model for this set of parameters
+            tic;
+            if setup.noObjData && setup.noObjOptions
+                obs = objFn( params );
+            elseif setup.noObjOptions
+                obs = objFn( params, data );
+            else
+                obs = objFn( params, data, options );
+            end
+            
         end
 
         % record observation
@@ -253,10 +260,10 @@ for k = 1:setup.nFit
         search.YTrace( c ) = obs;
         search.XTrace( c, : ) = params;
         search.XTraceIndex( c, : ) = indices;
-        
-        %if setup.verbose > 0
-        %    disp(['  Actual Model: Loss = ' num2str( obs )]);
-        %end
+        if j == 1 && k > 1
+            % record observation to compare with estimated value
+            opt.ObsYTrace( k-1 ) = obs;
+        end
         
     end
 
@@ -359,6 +366,16 @@ for k = 1:setup.nFit
         
 end
 
+% finally check on the accuracy of the final prediction
+params = opt.XTrace( k, : );
+if setup.noObjData && setup.noObjOptions
+    opt.ObsYTrace( k ) = objFn( params );
+elseif setup.noObjOptions
+    opt.ObsYTrace( k ) = objFn( params, data );
+else
+    opt.ObsYTrace( k ) = objFn( params, data, options );
+end
+
             
 end
 
@@ -398,11 +415,12 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, ...
         for i = 1:nVar
             switch pDef(i).Type
                 case 'categorical'
-                    pIndex(i) = rndInt( pInfo.nLevels(i), r(i) );
+                    pIndex(i) = rndCat( pInfo.nLevels(i), r(i) );
                     p.(pDef(i).Name) = categorical( ...
                                             pDef(i).Range( pIndex(i) ) );
                 case 'integer'
-                    pIndex(i) = rndInt( pInfo.nLevels(i), r(i) );
+                    pIndex(i) = rndInt( pInfo.lowerBound(i), ...
+                                         pInfo.upperBound(i), r(i) );
                     p.(pDef(i).Name) = pIndex(i);
                 case 'real'
                     pIndex(i) = rndReal( pInfo.lowerBound(i), ...
@@ -443,11 +461,20 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, ...
 end
 
 
-function i = rndInt( range, rnd )
+function i = rndCat( range, rnd )
 
 % Generate a random integer in the range 1..rng
 
 i = round( range*rnd-0.5)+1;
+
+end
+
+
+function r = rndInt( lower, upper, rnd )
+
+% Generate a random real in the range lower..upper
+
+r = round( lower+(upper-lower)*rnd );
 
 end
 
@@ -497,7 +524,11 @@ end
 
 function nPred = numPredictors( data, isCat )
 
-nCat = size( dummyvar( data(:,isCat) ), 2 );
+if sum( isCat ) > 1
+    nCat = size( dummyvar( data(:,isCat) ), 2 );
+else
+    nCat = 0;
+end
 nNotCat = length( isCat ) - sum( isCat );
 
 nPred = nCat + nNotCat;

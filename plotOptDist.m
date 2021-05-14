@@ -179,11 +179,9 @@ for i = 1:nVar
                 figure( figRef(i) );
             end
             if nGroups == 1
-                plotPDF( YAll, varDef(i), ...
-                            XFit, YTotal );
+                plotPDF( YAll, varDef(i), XFit, YTotal );
             else
-                plotLayeredPDF( XTrace, varDef(i), ...
-                            XFit, YTotal );
+                plotLayeredPDF( XTrace, varDef(i), YTotal );
             end
         end
         
@@ -268,12 +266,12 @@ function plotPDF( Y, varDef, XFit, YTotal )
 end
 
 
-function plotLayeredPDF( X, varDef, XFit, YTotal )
+function plotLayeredPDF( X, varDef, YTotal )
 
     colourRGB = getColours;
     nCol = size( colourRGB, 1 );
     
-    nPts = length( XFit );
+    nPts = 201;
 
     XPlot = linspace( varDef.Range(1), varDef.Range(2), nPts )';
     XRev = [ XPlot; flipud(XPlot) ];
@@ -294,7 +292,7 @@ function plotLayeredPDF( X, varDef, XFit, YTotal )
         YPDF = fitdist( XSub , 'Kernel', ...
                             'Kernel', 'Normal', ...
                             'Width', 0.1*XFitBorder );                
-        Y = pdf( YPDF, XFit )*YProp/YTotal;
+        Y = pdf( YPDF, XPlot )*YProp/YTotal;
 
         % draw shaded area
         YRev= [ Y+Y0; flipud(Y0) ];

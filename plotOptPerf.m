@@ -72,6 +72,9 @@ hold on;
 % plot surrogate model prediction
 plot( nStep*(1:nObs), opt.EstYTrace( 1:nObs ), 'LineWidth', 2 );
 
+% plot matching actual observation for same point
+plot( nStep*(1:nObs-1), opt.ObsYTrace( 1:nObs-1 ), 'LineWidth', 2 );
+
 hold off;
 xlim( [0, nSearch] );
 

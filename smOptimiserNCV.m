@@ -43,35 +43,42 @@
 % ************************************************************************
 
 
-function [ optTrace, valResult ] = smOptimiserNCV( ...
+function output = smOptimiserNCV( ...
                                 objFcn, paramDef, setup, data, options )
 
 % partition the data (outer)
-
-[ trnSelect, valSelect ] = partitionData(  (1:setup.nObs)', ...
-                                           setup.subjects, ...
-                                           setup.partitioning );
+% (valSelect is the reverse of trnSelect since no test data)
+trnSelect = partitionData(     (1:setup.nObs)', ...
+                               setup.subjects, ...
+                               setup.partitioning );
 
 % shorthand
 nOuter = setup.partitioning.iterations;
 nInner = setup.nFit;
+nSearch = setup.nSearch;
 nRepeats = setup.nRepeats;
 nInter = setup.nInterTrace;
 
 % initialise tables for recording optimisations
-optTraceFull = setupOptTable( paramDef, nOuter*nRepeats*nInner );
-optTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
+srchXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner*nSearch );
+srchYTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
+
+optXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner );
+optEstYTrace = zeros( nOuter*nRepeats*nInner, 1 );
+optObsYTrace = zeros( nOuter*nRepeats*nInner, 1 );
+
+optXTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
+
 optFold = zeros( nOuter*nRepeats*nInter, 1 );
-optTrace = setupOptTable( paramDef, nOuter );
+optXFinal = setupOptTable( paramDef, nOuter );
 
 
 % initialise arrays recording diagnostics and results
 valResult = zeros( nOuter, 1 );
 
 % initialise counters
-a0 = 0;
 a1 = 0;
-c0 = 0;
+b1 = 0;
 c1 = 0;
 m = 0;
 
@@ -85,11 +92,9 @@ for i = 1:nOuter
     if isa( data, 'struct')
         % data is structured so extract the subset from each field
         trnData = dataStructExtract( data, trnSelect(:,i) );
-        valData = dataStructExtract( data, valSelect(:,i) );
     else
         % assumed to be a table or array
         trnData = data( trnSelect(:,i), : );
-        valData = data( trnSelect(:,i), : );
     end
        
     % repeat runs on inner partitions
@@ -97,53 +102,74 @@ for i = 1:nOuter
         
         disp(['Inner Repeat = ' num2str(j)]);
         
-        [ ~, ~, optOutput ] = smOptimiser( objFcn, paramDef, setup, ...
-                                           trnData, ...
-                                           options );
+        [ ~, ~, optOutput, srchOutput ] = smOptimiser( ...
+                                            objFcn, paramDef, setup, ...
+                                            trnData, ...
+                                            options );
         % update counters
         a0 = a1 + 1;
-        a1 = a1 + nInner;
+        a1 = a1 + nInner*nSearch;
+        b0 = b1 + 1;
+        b1 = b1 + nInner;
         c0 = c1 + 1;
         c1 = c1 + nInter;
-                                       
-        optTraceFull( a0:a1, : ) = optOutput.XTrace;
-        optTraceInter( c0:c1, : ) = ...
-                        optOutput.XTrace( end-nInter+1:end, :);
+
+        % record traces
+        srchXTrace( a0:a1, : ) = srchOutput.XTrace;
+        srchYTrace( a0:a1 ) = srchOutput.YTrace;
+        
+        optXTrace( b0:b1, : ) = optOutput.XTrace;       
+        optEstYTrace( b0:b1, : ) = optOutput.EstYTrace;
+        optObsYTrace( b0:b1, : ) = optOutput.ObsYTrace;
+        
+        optXTraceInter( c0:c1, : ) = optOutput.XTrace( end-nInter+1:end, :);
+        
         optFold( c0:c1 ) = i;
               
     end
     
     m = m + 1;
     % determine optimal parameters for this outer fold
-    % temporarily disable plotting
     temp = setup.showPlots;
-    setup.showPlots = false;
-    optTrace(m,:) = plotOptDist( ...
-                                optTraceInter(c1-nRepeats*nInter+1:c1,:), ...
+    setup.showPlots = false;     % temporarily disable plotting
+    optXFinal(m,:) = plotOptDist( ...
+                                optXTraceInter(c1-nRepeats*nInter+1:c1,:), ...
                                 paramDef, ...
                                 setup, ...
                                 [] );
     setup.showPlots = temp;
     
-    valResult(i) = objFcn( optTrace(m,:), ...
-                           data, ...
-                           options, ...
-                           trnSelect(:,i) );
+    valResult(i) = objFcn( optXFinal(m,:), ...
+                                   data, ...
+                                   options, ...
+                                   trnSelect(:,i) );
     
     disp(['Outer Validation Error = ' num2str( valResult(i) )]);
     
     % plot over distribution for all folds up to this point
-    [ ~, ~, summaryFig ]= plotOptDist( ...
-                                optTraceInter(1:c1,:), ...
-                                paramDef, ...
-                                setup, ...
-                                summaryFig, ...
-                                optFold(1:c1) );
-    
+    [ optFinal, ~, summaryFig ]= plotOptDist( ...
+                                    optXTraceInter(1:c1,:), ...
+                                    paramDef, ...
+                                    setup, ...
+                                    summaryFig, ...
+                                    optFold(1:c1) );
+                                
 end
 
+% assemble output structure
+output.optimum = optFinal;
+output.estimate = mean( valResult );
+output.valFolds = valResult;
+output.optXFinal = optXFinal;
+output.optXTraceInter = optXTraceInter;
+output.optXTraceFull = optXTrace;
+output.EstYTrace = optEstYTrace;
+output.ObsYTrace = optObsYTrace;
+output.searchXTrace = srchXTrace;
+output.searchYTrace = srchYTrace;
 
 end
+
 
 
 function subset = dataStructExtract( data, rows )
