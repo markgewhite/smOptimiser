@@ -191,13 +191,12 @@ opt.XTrace = table( ...
                 'VariableNames', paramInfo.name );
 opt.XTraceIndex = zeros( setup.nFit, nParams );
 opt.EstYTrace = zeros( setup.nFit, 1 );
-opt.YCITrace = zeros( setup.nFit, 1 );
+opt.EstYCITrace = zeros( setup.nFit, 1 );
 opt.ObsYTrace = zeros( setup.nFit, 1 );
+opt.NoiseTrace = zeros( setup.nFit, 1 );
 
-opt.noise = zeros( setup.nFit, 1 );
-opt.modelSD = zeros( setup.nFit, 1 );
-opt.fitTime = zeros( setup.nFit, 1 );
-opt.psoTime = zeros( setup.nFit, 1 );
+opt.fitTimeTrace = zeros( setup.nFit, 1 );
+opt.psoTimeTrace = zeros( setup.nFit, 1 );
 
 model = 0;
 optionsPSO = optimoptions('particleswarm', ...
@@ -316,7 +315,7 @@ for k = 1:setup.nFit
         
         end
     end
-    opt.fitTime( k ) = toc;
+    opt.fitTimeTrace( k ) = toc;
     
     % find the global optimum with Particle Swarm Optimisation
     objFcn = @(p) roundParamsFn( model, p, paramInfo.isCat );
@@ -327,15 +326,15 @@ for k = 1:setup.nFit
                                 paramInfo.lowerBound, ...
                                 paramInfo.upperBound, ...
                                 optionsPSO );
-    opt.psoTime( k ) = toc;
+    opt.psoTimeTrace( k ) = toc;
 
     optimumR( paramInfo.doRounding ) = round( optimum( paramInfo.doRounding ) );
     optimumR( ~paramInfo.doRounding ) = optimum( ~paramInfo.doRounding );
 
     opt.XTrace( k, : ) = convParams( optimumR, paramDef, paramInfo );  
     opt.XTraceIndex( k, : ) = optimumR;
-    opt.noise( k ) = model.Sigma;
-    [ opt.EstYTrace( k ), opt.modelSD( k ) ] = predict( model, optimumR );
+    opt.NoiseTrace( k ) = model.Sigma;
+    [ opt.EstYTrace( k ), opt.EstYCITrace( k ) ] = predict( model, optimumR );
     
     if setup.constrain
         % restrict search to loss less than a
@@ -347,8 +346,8 @@ for k = 1:setup.nFit
     % make interim reports
     if setup.verbose > 0
         disp(['Surogate Model: Loss = ' num2str( opt.EstYTrace(k) ) ...
-                    ' +/- ' num2str( opt.YCITrace(k) ) ...
-                    '; noise = ' num2str( opt.noise(k) )] );
+                    ' +/- ' num2str( opt.EstYCITrace(k) ) ...
+                    '; noise = ' num2str( opt.NoiseTrace(k) )] );
     end
     if setup.verbose > 1
         [ opt.XDistPeak( k, : ), ~, figDist ] = plotOptDist( ...

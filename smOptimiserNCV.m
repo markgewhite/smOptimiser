@@ -66,12 +66,15 @@ srchYTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
 optXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner );
 optEstYTrace = zeros( nOuter*nRepeats*nInner, 1 );
 optObsYTrace = zeros( nOuter*nRepeats*nInner, 1 );
+optEstYCITrace = zeros( nOuter*nRepeats*nInner, 1 );
 
 optXTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
 
 optFold = zeros( nOuter*nRepeats*nInter, 1 );
 optXFinal = setupOptTable( paramDef, nOuter );
 
+optFitTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
+optPSOTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
 
 % initialise arrays recording diagnostics and results
 valResult = zeros( nOuter, 1 );
@@ -121,6 +124,9 @@ for i = 1:nOuter
         optXTrace( b0:b1, : ) = optOutput.XTrace;       
         optEstYTrace( b0:b1, : ) = optOutput.EstYTrace;
         optObsYTrace( b0:b1, : ) = optOutput.ObsYTrace;
+        optEstYCITrace( b0:b1, : ) = optOutput.EstYCITrace;
+        optFitTimeTrace( b0:b1 ) = optOutput.fitTimeTrace;
+        optPSOTimeTrace( b0:b1 ) = optOutput.psoTimeTrace;
         
         optXTraceInter( c0:c1, : ) = optOutput.XTrace( end-nInter+1:end, :);
         
@@ -164,9 +170,13 @@ output.optXFinal = optXFinal;
 output.optXTraceInter = optXTraceInter;
 output.optXTraceFull = optXTrace;
 output.EstYTrace = optEstYTrace;
+output.EstYCITrace = optEstYCITrace;
 output.ObsYTrace = optObsYTrace;
 output.searchXTrace = srchXTrace;
 output.searchYTrace = srchYTrace;
+output.optFitTimeTrace = optFitTimeTrace;
+output.optPSOTimeTrace = optPSOTimeTrace;
+
 
 end
 
