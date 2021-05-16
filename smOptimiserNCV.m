@@ -62,6 +62,7 @@ nInter = setup.nInterTrace;
 % initialise tables for recording optimisations
 srchXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner*nSearch );
 srchYTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
+srchObjFnTimeTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
 
 optXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner );
 optEstYTrace = zeros( nOuter*nRepeats*nInner, 1 );
@@ -120,6 +121,7 @@ for i = 1:nOuter
         % record traces
         srchXTrace( a0:a1, : ) = srchOutput.XTrace;
         srchYTrace( a0:a1 ) = srchOutput.YTrace;
+        srchObjFnTimeTrace( a0:a1 ) = srchOutput.YTrace;
         
         optXTrace( b0:b1, : ) = optOutput.XTrace;       
         optEstYTrace( b0:b1, : ) = optOutput.EstYTrace;
@@ -174,6 +176,7 @@ output.EstYCITrace = optEstYCITrace;
 output.ObsYTrace = optObsYTrace;
 output.searchXTrace = srchXTrace;
 output.searchYTrace = srchYTrace;
+output.objFnTimeTrace = srchObjFnTimeTrace;
 output.optFitTimeTrace = optFitTimeTrace;
 output.optPSOTimeTrace = optPSOTimeTrace;
 

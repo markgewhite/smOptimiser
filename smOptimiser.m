@@ -32,20 +32,44 @@
 %               .initMaxLoss:   initial maximum objective function loss
 %                               (default = 1E6) rance for Particle Swarm
 %                               Optimisation (optional; default = 1E-3)
-%               .tolPSO         function minimum tolerance for PSO
+%               .tolPSO:        function minimum tolerance for PSO
 %                               (optional; default = 0.001)
-%               .maxIterPSO     maximum number of PSO search iterations
+%               .maxIterPSO:     maximum number of PSO search iterations
 %                               (optional; default = 1000)
-%               .prcMaxLoss     percentile of observations for maxLoss
+%               .prcMaxLoss:     percentile of observations for maxLoss
 %                               (optional; default = 100)
-%               .verbose        output level: (optional; default = 1)
+%               .porousness:    factor governing how 'porous' the maxLoss
+%                               is - the more porous the more likely the
+%                               search will try a point that is above
+%                               the limit in case that estimate is wrong
+%                               (optional; default = 0.5)
+%               .window:        number of recent observations to include
+%                               when determining the current typical
+%                               range of the objective function
+%                               (optional; default = 2*nSearch)
+%               .verbose:       output level: (optional; default = 1)
 %                                   0 = no output; 1 = commandline output
+%               .quasiRandom:   whether to use quasi-random search instead
+%                               of a pseudo-random one 
+%                               (optional; default = false)
+%               .cap:           cap on the objective function's value
+%                               in case it sometimes returns extreme values
+%                               - the cap is intended to prevent unstable
+%                               behaviour of the surrogate model
+%                               (optional; default = infinity [ie no cap])
+%               .sigmaCap:      cap on the fitted noise level of the 
+%                               surrogate model - usually the SM is fitted
+%                               with an adaptive noise level but if this is
+%                               too high the SM will not adapt to low value 
+%                               observations which would be a critical
+%                               failing, making it very difficult to find
+%                               the minimum.
 %
 %           data:               data if required for the objective function
 %                               (optional)
 %
 %           options:            options structure if required for the
-%                               objective function (options)
+%                               objective function (optional)
 %
 % Output:
 %           optimum:            optimal parameters for the objective function
@@ -108,6 +132,10 @@ if ~isfield( setup, 'porousness' )
    setup.porousness = 0.5; % default
 end
 
+if ~isfield( setup, 'window' )
+   setup.window = setup.nSearch*2; % default
+end
+
 if ~isfield( setup, 'verbose' )
    setup.verbose = 1; % default
 end
@@ -118,6 +146,14 @@ end
 
 if ~isfield( setup, 'quasiRandom' )
    setup.quasiRandom = false; % default
+end
+
+if ~isfield( setup, 'cap' )
+   setup.cap = Inf; % default
+end
+
+if ~isfield( setup, 'sigmaCap' )
+   setup.sigmaCap = Inf; % default
 end
 
 
@@ -183,7 +219,9 @@ search.XTrace = table( ...
                 'VariableNames', paramInfo.name );
 search.XTraceIndex = zeros( setup.nFit*setup.nSearch, nParams );
 search.YTrace = zeros( setup.nFit*setup.nSearch, 1 );
-search.objFnTime = zeros( setup.nFit*setup.nSearch, 1 );
+search.objFnTimeTrace = zeros( setup.nFit*setup.nSearch, 1 );
+search.delta = zeros( setup.nFit*setup.nSearch, 1 );
+search.nTries = zeros( setup.nFit*setup.nSearch, 1 );
 
 opt.XTrace = table( ...
                 'Size', [setup.nFit, nParams], ...
@@ -194,11 +232,12 @@ opt.EstYTrace = zeros( setup.nFit, 1 );
 opt.EstYCITrace = zeros( setup.nFit, 1 );
 opt.ObsYTrace = zeros( setup.nFit, 1 );
 opt.NoiseTrace = zeros( setup.nFit, 1 );
+opt.maxLossTrace = zeros( setup.nFit, 1 );
 
 opt.fitTimeTrace = zeros( setup.nFit, 1 );
 opt.psoTimeTrace = zeros( setup.nFit, 1 );
 
-model = 0;
+model = [];
 optionsPSO = optimoptions('particleswarm', ...
                             'Display', 'None', ...
                             'FunctionTolerance', setup.tolPSO, ...
@@ -215,9 +254,10 @@ else
 end
 
 % start with the initial specified maximum
-maxLoss = setup.initMaxLoss;
-% full iteration counter
+opt.maxLossTrace(1) = setup.initMaxLoss;
+
 c = 0; 
+w = setup.window; 
 
 for k = 1:setup.nFit
 
@@ -229,10 +269,11 @@ for k = 1:setup.nFit
             % determine the random parameters
             if j > 1 || k == 1
                 % random search
-                [ params, indices ] = randomParams( ...
+                [ params, indices, delta, nTries ] = randomParams( ...
                                     paramDef, paramInfo, model, ...
-                                    search.YTrace( 1:c ), ...
-                                    maxLoss, setup.porousness, ...
+                                    search.YTrace( max(c-w+1,1):c ), ...
+                                    opt.maxLossTrace( max(k-1,1) ), ...
+                                    setup.porousness, ...
                                     setup.maxTries, rndQ );     
             else
                 % parameters at estimated optimum
@@ -255,10 +296,12 @@ for k = 1:setup.nFit
 
         % record observation
         c = c+1;
-        search.objFnTime( c ) = toc;
-        search.YTrace( c ) = obs;
+        search.objFnTimeTrace( c ) = toc;
+        search.YTrace( c ) = min( obs, setup.cap );
         search.XTrace( c, : ) = params;
         search.XTraceIndex( c, : ) = indices;
+        search.delta( c ) = delta;
+        search.nTries( c ) = nTries;
         if j == 1 && k > 1
             % record observation to compare with estimated value
             opt.ObsYTrace( k-1 ) = obs;
@@ -270,77 +313,53 @@ for k = 1:setup.nFit
     
     % fit the GP model to the observations
     tic;
-    if k == 1
-        % first with no initial hyperparameters
-        model = fitrgp(  ...
-                    search.XTraceIndex( 1:c, : ), ...
-                    search.YTrace( 1:c ), ...
-                    'CategoricalPredictors', paramInfo.isCat, ...
-                    'BasisFunction', 'Constant', ... 
-                    'KernelFunction', 'ARDMatern52', ...
-                    'Standardize', false );
-    else
-        % use previously fitted hyperparameters as initial values
-        % which speeds up the fitting considerably
-        
-        % check first if the number of predictors has changed
-        % as with categorical variables there can be more dummy variables
-        nPredictors = numPredictors( search.XTraceIndex( 1:c, : ), ...
-                                     paramInfo.isCat );
-        if nPredictors == ...
-                length( model.KernelInformation.KernelParameters )-1
-            
-            model = fitrgp(  ...
-                    search.XTraceIndex( 1:c, : ), ...
-                    search.YTrace( 1:c ), ...
-                    'CategoricalPredictors', paramInfo.isCat, ...
-                    'BasisFunction', 'Constant', ... 
-                    'KernelFunction', 'ARDMatern52', ...
-                    'Standardize', false, ...
-                    'Sigma', model.Sigma, ...
-                    'Beta', model.Beta, ...
-                    'KernelParameters', model.KernelInformation.KernelParameters );
-                
-        else
-            % cannot use the previous kernel parameters
-            model = fitrgp(  ...
-                    search.XTraceIndex( 1:c, : ), ...
-                    search.YTrace( 1:c ), ...
-                    'CategoricalPredictors', paramInfo.isCat, ...
-                    'BasisFunction', 'Constant', ... 
-                    'KernelFunction', 'ARDMatern52', ...
-                    'Standardize', false, ...
-                    'Sigma', model.Sigma, ...
-                    'Beta', model.Beta );
-        
-        end
+    model = fitSurrogateModel(  model, paramInfo, ...
+                                search.XTraceIndex( 1:c, : ), ...
+                                search.YTrace( 1:c ), ...
+                                false );
+                            
+    if model.Sigma > setup.sigmaCap
+        % refit enforcing a constant sigma so that outliers are not ignored
+        model = fitSurrogateModel(  model, paramInfo, ...
+                                    search.XTraceIndex( 1:c, : ), ...
+                                    search.YTrace( 1:c ), ...
+                                    true, setup.sigmaCap );
     end
+    
+    opt.NoiseTrace( k ) = model.Sigma;
     opt.fitTimeTrace( k ) = toc;
     
+    
     % find the global optimum with Particle Swarm Optimisation
+    tic;
+    
     objFcn = @(p) roundParamsFn( model, p, paramInfo.isCat );
 
-    tic;
     optimum = particleswarm(    objFcn, ...
                                 nParams, ...
                                 paramInfo.lowerBound, ...
                                 paramInfo.upperBound, ...
                                 optionsPSO );
-    opt.psoTimeTrace( k ) = toc;
 
+    % enforce rounding of categorical or integer parameters
     optimumR( paramInfo.doRounding ) = round( optimum( paramInfo.doRounding ) );
     optimumR( ~paramInfo.doRounding ) = optimum( ~paramInfo.doRounding );
 
     opt.XTrace( k, : ) = convParams( optimumR, paramDef, paramInfo );  
     opt.XTraceIndex( k, : ) = optimumR;
-    opt.NoiseTrace( k ) = model.Sigma;
     [ opt.EstYTrace( k ), opt.EstYCITrace( k ) ] = predict( model, optimumR );
+    
+    opt.psoTimeTrace( k ) = toc;
+
+    
     
     if setup.constrain
         % restrict search to loss less than a
         % progressively reducing proportion of previous minimum
         alpha = setup.prcMaxLoss*(1 - k/setup.nFit);
-        maxLoss = prctile( search.YTrace(1:c), alpha );
+        opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
+                    prctile( search.YTrace( max(c-w+1,1):c), alpha ) - ...
+                    prctile( search.YTrace( max(c-w+1,1):c), 0 );
     end
     
     % make interim reports
@@ -350,16 +369,16 @@ for k = 1:setup.nFit
                     '; noise = ' num2str( opt.NoiseTrace(k) )] );
     end
     if setup.verbose > 1
+        figPerf = plotOptPerf( search, opt, figPerf );
+    end
+    if setup.verbose > 2
         [ opt.XDistPeak( k, : ), ~, figDist ] = plotOptDist( ...
                          opt.XTrace( 1:k, : ), ...
                          paramDef, setup, figDist );
     end
-    if setup.verbose > 2
+    if setup.verbose > 3
         figSearch = plotOptSearch( search.XTraceIndex, opt.XTraceIndex, ...
                                     paramDef, figSearch );
-    end
-    if setup.verbose > 3
-        figPerf = plotOptPerf( search, opt, figPerf );
     end
 
         
@@ -368,19 +387,21 @@ end
 % finally check on the accuracy of the final prediction
 params = opt.XTrace( k, : );
 if setup.noObjData && setup.noObjOptions
-    opt.ObsYTrace( k ) = objFn( params );
+    obs = objFn( params );
 elseif setup.noObjOptions
-    opt.ObsYTrace( k ) = objFn( params, data );
+    obs = objFn( params, data );
 else
-    opt.ObsYTrace( k ) = objFn( params, data, options );
+    obs = objFn( params, data, options );
 end
+
+opt.ObsYTrace( k ) = min( obs, setup.cap );
 
             
 end
 
 
 
-function [ p, pIndex ] = randomParams( pDef, pInfo, ...
+function [ p, pIndex, delta, nTries ] = randomParams( pDef, pInfo, ...
                                         model, YTrace, ...
                                         maxLoss, porousness, ...
                                         maxTries, rndQ )
@@ -393,7 +414,9 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, ...
     
     if useGPModel
         % calculate width of acceptance probability drop-off
-        sigma = porousness*std( YTrace );
+        delta = porousness*std( YTrace );
+    else
+        delta = 0;
     end
 
     inRange = false;
@@ -437,7 +460,7 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, ...
             else
                 % compute probability of accepting params
                 % based on a normal distribution
-                pAccept = exp(-0.5*((estLoss-maxLoss)/sigma)^2);
+                pAccept = exp(-0.5*((estLoss-maxLoss)/delta)^2);
                 inRange = rand<pAccept;
             end
 
@@ -450,7 +473,7 @@ function [ p, pIndex ] = randomParams( pDef, pInfo, ...
         if mod( nTries, maxTries )==0
             % double the probability acceptance width
             % to increase chances of finding an acceptable point
-            sigma = sigma*2;
+            delta = delta*2;
         end
     
     end       
@@ -485,6 +508,68 @@ function r = rndReal( lower, upper, rnd )
 r = lower+(upper-lower)*rnd;
 
 end
+
+
+
+function model = fitSurrogateModel( prevModel, var, X, Y, fixSigma, sigma )
+
+if nargin < 6
+    sigma = 0.5;
+    fixSigma = false;
+end
+
+if isempty( prevModel ) || fixSigma
+    % first with no initial hyperparameters
+    model = fitrgp(  ...
+                X, ...
+                Y, ...
+                'CategoricalPredictors', var.isCat, ...
+                'BasisFunction', 'Constant', ... 
+                'KernelFunction', 'ARDMatern52', ...
+                'Standardize', false, ...
+                'Sigma', sigma, ...
+                'ConstantSigma', fixSigma );
+
+else
+    % use previously fitted hyperparameters as initial values
+    % which speeds up the fitting considerably
+
+    % check first if the number of predictors has changed
+    % as with categorical variables there can be more dummy variables
+    nPredictors = numPredictors( X, var.isCat );
+    if nPredictors == ...
+            length( prevModel.KernelInformation.KernelParameters )-1
+
+        model = fitrgp(  ...
+                X, ...
+                Y, ...
+                'CategoricalPredictors', var.isCat, ...
+                'BasisFunction', 'Constant', ... 
+                'KernelFunction', 'ARDMatern52', ...
+                'Standardize', false, ...
+                'Sigma', prevModel.Sigma, ...
+                'Beta', prevModel.Beta, ...
+                'KernelParameters', prevModel.KernelInformation.KernelParameters );
+
+    else
+        % cannot use the previous kernel parameters
+        model = fitrgp(  ...
+                X, ...
+                Y, ...
+                'CategoricalPredictors', var.isCat, ...
+                'BasisFunction', 'Constant', ... 
+                'KernelFunction', 'ARDMatern52', ...
+                'Standardize', false, ...
+                'Sigma', prevModel.Sigma, ...
+                'Beta', prevModel.Beta );
+
+    end
+end
+
+
+
+end
+
 
 
 function obj = roundParamsFn( model, Xnumeric, isCat )
