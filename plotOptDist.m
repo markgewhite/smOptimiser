@@ -169,6 +169,9 @@ for i = 1:nVar
         % identify and record highest frequency
         [ topFreq, topLoc ] = max( YAll );
         XOptimum.(varName)(1) = XFit( topLoc );
+        if strcmpi( varDef(i).Type, 'integer' )
+            XOptimum.(varName)(1) = round( XOptimum.(varName)(1) );
+        end
         XFreq(1,i) = topFreq/YTotal;        
     
         if setup.showPlots

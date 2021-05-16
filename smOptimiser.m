@@ -152,8 +152,12 @@ if ~isfield( setup, 'cap' )
    setup.cap = Inf; % default
 end
 
-if ~isfield( setup, 'sigmaCap' )
-   setup.sigmaCap = Inf; % default
+if ~isfield( setup, 'sigmaLB' )
+   setup.sigmaLB = 0; % default
+end
+
+if ~isfield( setup, 'sigmaUB' )
+   setup.sigmaUB = Inf; % default
 end
 
 
@@ -264,10 +268,11 @@ for k = 1:setup.nFit
     for j = 1:setup.nSearch
         
         obs = NaN;
+        secondTry = false;
         while isnan( obs )
         
             % determine the random parameters
-            if j > 1 || k == 1
+            if j > 1 || k == 1 || secondTry
                 % random search
                 [ params, indices, delta, nTries ] = randomParams( ...
                                     paramDef, paramInfo, model, ...
@@ -291,6 +296,7 @@ for k = 1:setup.nFit
             else
                 obs = objFn( params, data, options );
             end
+            secondTry = true;
             
         end
 
@@ -318,12 +324,13 @@ for k = 1:setup.nFit
                                 search.YTrace( 1:c ), ...
                                 false );
                             
-    if model.Sigma > setup.sigmaCap
+    if model.Sigma < setup.sigmaLB || model.Sigma > setup.sigmaUB
         % refit enforcing a constant sigma so that outliers are not ignored
+        fixedSigma = min( max( model.Sigma, setup.sigmaLB ), setup.sigmaUB );
         model = fitSurrogateModel(  model, paramInfo, ...
                                     search.XTraceIndex( 1:c, : ), ...
                                     search.YTrace( 1:c ), ...
-                                    true, setup.sigmaCap );
+                                    true, fixedSigma );
     end
     
     opt.NoiseTrace( k ) = model.Sigma;
@@ -356,10 +363,13 @@ for k = 1:setup.nFit
     if setup.constrain
         % restrict search to loss less than a
         % progressively reducing proportion of previous minimum
-        alpha = setup.prcMaxLoss*(1 - k/setup.nFit);
+        %alpha = setup.prcMaxLoss*(1 - k/setup.nFit);
+        %opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
+        %            prctile( search.YTrace( max(c-w+1,1):c), alpha ) - ...
+        %            prctile( search.YTrace( max(c-w+1,1):c), 0 );
+        alpha = (1 - k/setup.nFit);
         opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
-                    prctile( search.YTrace( max(c-w+1,1):c), alpha ) - ...
-                    prctile( search.YTrace( max(c-w+1,1):c), 0 );
+                            alpha*std( search.YTrace( max(c-w+1,1):c) );
     end
     
     % make interim reports
@@ -372,14 +382,15 @@ for k = 1:setup.nFit
         figPerf = plotOptPerf( search, opt, figPerf );
     end
     if setup.verbose > 2
+        figSearch = plotOptSearch( search.XTraceIndex, opt.XTraceIndex, ...
+                                    paramDef, figSearch );
+    end
+    if setup.verbose > 3
         [ opt.XDistPeak( k, : ), ~, figDist ] = plotOptDist( ...
                          opt.XTrace( 1:k, : ), ...
                          paramDef, setup, figDist );
     end
-    if setup.verbose > 3
-        figSearch = plotOptSearch( search.XTraceIndex, opt.XTraceIndex, ...
-                                    paramDef, figSearch );
-    end
+
 
         
 end
@@ -438,16 +449,12 @@ function [ p, pIndex, delta, nTries ] = randomParams( pDef, pInfo, ...
             switch pDef(i).Type
                 case 'categorical'
                     pIndex(i) = rndCat( pInfo.nLevels(i), r(i) );
-                    p.(pDef(i).Name) = categorical( ...
-                                            pDef(i).Range( pIndex(i) ) );
                 case 'integer'
                     pIndex(i) = rndInt( pInfo.lowerBound(i), ...
                                          pInfo.upperBound(i), r(i) );
-                    p.(pDef(i).Name) = pIndex(i);
                 case 'real'
                     pIndex(i) = rndReal( pInfo.lowerBound(i), ...
                                          pInfo.upperBound(i), r(i) );
-                    p.(pDef(i).Name) = pIndex(i);
             end               
         end
 
@@ -478,6 +485,19 @@ function [ p, pIndex, delta, nTries ] = randomParams( pDef, pInfo, ...
     
     end       
     
+    % generate table from indices
+    % this is done outside the search loop because 
+    % the 'categorical' function is time consuming
+    for i = 1:nVar
+        switch pDef(i).Type
+            case 'categorical'
+                p.(pDef(i).Name) = categorical( pDef(i).Range( pIndex(i) ) );
+            case 'integer'
+                p.(pDef(i).Name) = pIndex(i);
+            case 'real'
+                p.(pDef(i).Name) = pIndex(i);
+        end
+    end               
     p = struct2table( p );
     
 end

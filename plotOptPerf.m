@@ -77,6 +77,11 @@ plot( nStep*(1:nObs-1), opt.ObsYTrace( 1:nObs-1 ), 'LineWidth', 2 );
 
 % plot maxLoss trace
 plot( nStep*(1:nObs), opt.maxLossTrace( 1:nObs ), 'LineWidth', 2  );
+
+% plot the standard deviation on probability acceptance distribution
+maxLossFine = repelem( opt.maxLossTrace( 1:nObs ), nStep );
+plot( maxLossFine+search.delta( 1:nObs*nStep ), 'LineWidth', 2  );
+
 hold off;
 
 xlim( [0, nSearch] );
@@ -86,20 +91,13 @@ ylim( [yMin, yMax] );
 xlabel( 'Iterations' );
 ylabel( 'Function Value' );   
 
-
-% plot the standard deviation on probability acceptance distribution
-subplot( 2, 2, 4 );
-plot( search.delta( 1:nObs*nStep ), 'LineWidth', 2  );
-hold on;
-
 % plot the number of tries to find a suitable X
-plot( search.nTries( 1:nObs*nStep )/100, 'LineWidth', 2  );
+subplot( 2, 2, 4 );
+plot( search.nTries( 1:nObs*nStep ), 'LineWidth', 2  );
 
-
-hold off;
 xlim( [0, nSearch] );
 xlabel( 'Iterations' );
-ylabel( 'Limits' );
+ylabel( 'Tries' );
 
 
 drawnow;
