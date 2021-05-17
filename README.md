@@ -32,26 +32,55 @@ Some points with estimated values higher than this are admitted with diminishing
 
 function [ optimum, model, opt, search ] = smOptimiser( objFn, paramDef, setup )
 
-Arguments:
+**Arguments:**
 - objFn: objective function handle (all parameters specified in a single row table)
 - paramDef: objective function's parameter definitions based on the same format as bayesopt: optimizervariable (https://uk.mathworks.com/help/stats/optimizablevariable.html)
 - setup: optimiser's setup varable structure
+- data: data (in whatever form) that will be passed to the objective function
+- options: options for the objective function (in whatever form, e.g. structure) that will be passed to it
 
-Setup:
-- .nOuter: number of outer iterations (default = 100)
-- .nInner: after every nInner iterations make observation at the previously estimated optimum (default = 20)
-- .maxTries: maximum number of times to try a random choice of parameter values that satisfies the constraint (default = 20)
-- .initMaxLoss: initial maximum objective function loss (default = 1E6) rance for Particle Swarm Optimisation (optional; default = 1E-3)
-- .tolPSO: function minimum tolerance for PSO (optional; default = 0.001)
-- .maxIterPSO: maximum number of PSO search iterations (optional; default = 1000)
-- .prcMaxLoss: percentile of observations for maxLoss (optional; default = 100)
-- .verbose: output level: 0 = no output; 1 = commandline output (optional; default = 1)
 
-Outputs:
+*Setup:*
+- .nFit: number of model fits (default = 20)
+- .nSearch: number of observations before next fit optimum (default = 20)
+- .maxTries: maximum number of times to try a random choice of parameter values that satisfies the constraint (default = 1000)
+- .porousness: factor governing how 'porous' maximum loss limit is - the more porous the more likely the search will try a point that is above the limit in case that estimate is wrong (optional; default = 0.5)
+- .window: number of recent observations to include when determining the current typical range of the objective function (optional; default = 2*nSearch)
+- .cap: cap on the objective function's value in case it sometimes returns extreme values - the cap is intended to prevent unstable behaviour of the surrogate model (optional; default = infinity [ie no cap])
+- .sigmaLB: noise lower bound for the surrogate model - to prevent the surrogate model from placing too much credance on individual observations (optional; default = 0)
+- .sigmaUB: noise upper bound for the surrogate model - to prevent the surrogate model from ignoring low-value observations which may arise from their being excessive variance in the objective function (optional; default = Inf)
+- .verbose: output level: 0 = no output; 1 = commandline output; 2 = optimiser performance diagnostics; 3 = individual parameter traces with interim estimated optimum overlaid; 4 = individual optimal parameter distributions - output includes all outputs up to and including the specified level (optional; default = 1)
+- .quasiRandom: whether to use quasi-random search for a more evely spaced distribution of parameter values instead of a pseudo-random one (optional; default = false)
+- .tolPSO:        function minimum tolerance for PSO (optional; default = 0.001)
+- .maxIterPSO:     maximum number of PSO search iterations (optional; default = 1000)
+
+
+**Outputs:**
 - optimum: optimal parameters for the objective function
 - model: Bayesian surrogate model structure (*fitrgp*)
 - opt: optimisation record structure (PSO)
 - search: random search record sructure
+
+
+*Opt:* (each field has nFit rows)
+- .XTrace: table recording the series of optima for each fit iteration
+- .XTraceIndex: array recording the optima in the alternative form of numeric indices
+- .EstYTrace: vector recording the estimated objective function value at the global optimum, as estimated by the surrogate model, at each iteration
+- .EstYCITrace: vector recording the confidence interval at the global optimum, as estimated by the surrogate model
+- .ObsYTrace: vector recording the actual objective function value at the global optimum
+- .NoiseTrace: vector recording the surrogate model's noise at each iteration
+- .maxLossTrace: vector recording the maxLoss limit used at each iteration
+- .fitTimeTrace: vector recording the time to fit the surrogate model
+- .psoTimeTrace: vector recording the time to run particle swarm optimisation
+
+
+*Search:* (each field has nFit*nSearch rows)
+- .XTrace: table recording the series of parameter sets used to evaluate the objective function
+- .XTraceIndex: array recording the same series of parameter sets but in numeric index form
+- .YTrace: vector recording the series of objective function observations
+- .objFnTimeTrace: vector recording the objective function's execution time
+- .delta: vector recording the standard deviation of the drop-off in the probability acceptance function used in the random search
+- .nTries: vector recording how many attempts were required on each iteration to find a suitable parameter set
 
 
 
