@@ -23,21 +23,12 @@
 %                               used by bayesopt
 %
 %           setup:              optimiser's setup
-%               .nFit:          number of model fits (default = 100)
+%               .nFit:          number of model fits (default = 20)
 %               .nSearch:       number of observations before next fit
 %                               optimum (default = 20)
 %               .maxTries:      maximum number of times to try a random
 %                               choice of parameter values that satisfies
-%                               the constraint (default = 20)
-%               .initMaxLoss:   initial maximum objective function loss
-%                               (default = 1E6) rance for Particle Swarm
-%                               Optimisation (optional; default = 1E-3)
-%               .tolPSO:        function minimum tolerance for PSO
-%                               (optional; default = 0.001)
-%               .maxIterPSO:     maximum number of PSO search iterations
-%                               (optional; default = 1000)
-%               .prcMaxLoss:     percentile of observations for maxLoss
-%                               (optional; default = 100)
+%                               the constraint (default = 1000)
 %               .porousness:    factor governing how 'porous' the maxLoss
 %                               is - the more porous the more likely the
 %                               search will try a point that is above
@@ -47,23 +38,24 @@
 %                               when determining the current typical
 %                               range of the objective function
 %                               (optional; default = 2*nSearch)
-%               .verbose:       output level: (optional; default = 1)
-%                                   0 = no output; 1 = commandline output
-%               .quasiRandom:   whether to use quasi-random search instead
-%                               of a pseudo-random one 
-%                               (optional; default = false)
 %               .cap:           cap on the objective function's value
 %                               in case it sometimes returns extreme values
 %                               - the cap is intended to prevent unstable
 %                               behaviour of the surrogate model
 %                               (optional; default = infinity [ie no cap])
-%               .sigmaCap:      cap on the fitted noise level of the 
-%                               surrogate model - usually the SM is fitted
-%                               with an adaptive noise level but if this is
-%                               too high the SM will not adapt to low value 
-%                               observations which would be a critical
-%                               failing, making it very difficult to find
-%                               the minimum.
+%               .sigmaLB:       noise lower bound for the surrogate model
+%                               (optional; default = 0)
+%               .sigmaUB:       noise upper bound for the surrogate model
+%                               (optional; default = Inf0)
+%               .verbose:       output level: (optional; default = 1)
+%                                   0 = no output; 1 = commandline output
+%               .quasiRandom:   whether to use quasi-random search instead
+%                               of a pseudo-random one 
+%                               (optional; default = false)
+%               .tolPSO:        function minimum tolerance for PSO
+%                               (optional; default = 0.001)
+%               .maxIterPSO:     maximum number of PSO search iterations
+%                               (optional; default = 1000)
 %
 %           data:               data if required for the objective function
 %                               (optional)
@@ -109,11 +101,7 @@ if isfield( setup, 'maxTries' )
         error('Setup: maxTries must be a positive integer.');
     end
 else
-   setup.maxTies = 20; % default
-end
-
-if ~isfield( setup, 'initMaxLoss' )
-   setup.maxTies = 1E6; % default
+   setup.maxTies = 1000; % default
 end
 
 if ~isfield( setup, 'tolPSO' )
@@ -122,10 +110,6 @@ end
 
 if ~isfield( setup, 'maxIterPSO' )
    setup.maxIterPSO = 1000; % default
-end
-
-if ~isfield( setup, 'prcMaxLoss' )
-   setup.prcMaxLoss = 100; % default
 end
 
 if ~isfield( setup, 'porousness' )
@@ -257,9 +241,7 @@ else
     rndQ = 0;
 end
 
-% start with the initial specified maximum
-opt.maxLossTrace(1) = setup.initMaxLoss;
-
+opt.maxLossTrace(1) = Inf;
 c = 0; 
 w = setup.window; 
 
@@ -361,12 +343,8 @@ for k = 1:setup.nFit
     
     
     if setup.constrain
-        % restrict search to loss less than a
-        % progressively reducing proportion of previous minimum
-        %alpha = setup.prcMaxLoss*(1 - k/setup.nFit);
-        %opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
-        %            prctile( search.YTrace( max(c-w+1,1):c), alpha ) - ...
-        %            prctile( search.YTrace( max(c-w+1,1):c), 0 );
+        % restrict search to loss less than a progressively reducing
+        % proportion of the standard deviation added to the estimated min
         alpha = (1 - k/setup.nFit);
         opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
                             alpha*std( search.YTrace( max(c-w+1,1):c) );
