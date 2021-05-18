@@ -58,24 +58,28 @@ nInner = setup.nFit;
 nSearch = setup.nSearch;
 nRepeats = setup.nRepeats;
 nInter = setup.nInterTrace;
+nParams = length( activeVarDef(paramDef) );
 
 % initialise tables for recording optimisations
-srchXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner*nSearch );
-srchYTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
-srchObjFnTimeTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
+srch.XTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner*nSearch );
+srch.XTraceIndex = zeros( nOuter*nRepeats*nInner*nSearch, nParams );
+srch.YTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
+srch.ObjFnTimeTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
 
-optXTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner );
-optEstYTrace = zeros( nOuter*nRepeats*nInner, 1 );
-optObsYTrace = zeros( nOuter*nRepeats*nInner, 1 );
-optEstYCITrace = zeros( nOuter*nRepeats*nInner, 1 );
+opt.XTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner );
+opt.XTraceIndex = zeros( nOuter*nRepeats*nInner, nParams );
+opt.EstYTrace = zeros( nOuter*nRepeats*nInner, 1 );
+opt.ObsYTrace = zeros( nOuter*nRepeats*nInner, 1 );
+opt.EstYCITrace = zeros( nOuter*nRepeats*nInner, 1 );
 
-optXTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
+opt.XTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
+opt.XTraceIndexInter = zeros( nOuter*nRepeats*nInter, nParams );
 
-optFold = zeros( nOuter*nRepeats*nInter, 1 );
-optXFinal = setupOptTable( paramDef, nOuter );
+opt.Fold = zeros( nOuter*nRepeats*nInter, 1 );
+opt.XFinal = setupOptTable( paramDef, nOuter );
 
-optFitTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
-optPSOTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
+opt.FitTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
+opt.PSOTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
 
 % initialise arrays recording diagnostics and results
 valResult = zeros( nOuter, 1 );
@@ -119,20 +123,24 @@ for i = 1:nOuter
         c1 = c1 + nInter;
 
         % record traces
-        srchXTrace( a0:a1, : ) = srchOutput.XTrace;
-        srchYTrace( a0:a1 ) = srchOutput.YTrace;
-        srchObjFnTimeTrace( a0:a1 ) = srchOutput.YTrace;
+        srch.XTrace( a0:a1, : ) = srchOutput.XTrace;
+        srch.XTraceIndex( a0:a1, : ) = srchOutput.XTraceIndex;
+        srch.YTrace( a0:a1 ) = srchOutput.YTrace;
+        srch.ObjFnTimeTrace( a0:a1 ) = srchOutput.YTrace;
         
-        optXTrace( b0:b1, : ) = optOutput.XTrace;       
-        optEstYTrace( b0:b1, : ) = optOutput.EstYTrace;
-        optObsYTrace( b0:b1, : ) = optOutput.ObsYTrace;
-        optEstYCITrace( b0:b1, : ) = optOutput.EstYCITrace;
-        optFitTimeTrace( b0:b1 ) = optOutput.fitTimeTrace;
-        optPSOTimeTrace( b0:b1 ) = optOutput.psoTimeTrace;
+        opt.XTrace( b0:b1, : ) = optOutput.XTrace;       
+        opt.XTraceIndex( b0:b1, : ) = optOutput.XTraceIndex;
+        opt.EstYTrace( b0:b1, : ) = optOutput.EstYTrace;
+        opt.ObsYTrace( b0:b1, : ) = optOutput.ObsYTrace;
+        opt.EstYCITrace( b0:b1, : ) = optOutput.EstYCITrace;
+        opt.FitTimeTrace( b0:b1 ) = optOutput.fitTimeTrace;
+        opt.PSOTimeTrace( b0:b1 ) = optOutput.psoTimeTrace;
         
-        optXTraceInter( c0:c1, : ) = optOutput.XTrace( end-nInter+1:end, :);
+        opt.XTraceInter( c0:c1, : ) = optOutput.XTrace( end-nInter+1:end, :);
+        opt.XTraceIndexInter( c0:c1, : ) = ...
+                                optOutput.XTraceIndex( end-nInter+1:end, :);
         
-        optFold( c0:c1 ) = i;
+        opt.Fold( c0:c1 ) = i;
               
     end
     
@@ -140,14 +148,14 @@ for i = 1:nOuter
     % determine optimal parameters for this outer fold
     temp = setup.showPlots;
     setup.showPlots = false;     % temporarily disable plotting
-    optXFinal(m,:) = plotOptDist( ...
-                                optXTraceInter(c1-nRepeats*nInter+1:c1,:), ...
+    opt.XFinal(m,:) = plotOptDist( ...
+                                opt.XTraceInter(c1-nRepeats*nInter+1:c1,:), ...
                                 paramDef, ...
                                 setup, ...
                                 [] );
     setup.showPlots = temp;
     
-    valResult(i) = objFcn( optXFinal(m,:), ...
+    valResult(i) = objFcn( opt.XFinal(m,:), ...
                                    data, ...
                                    options, ...
                                    trnSelect(:,i) );
@@ -155,31 +163,20 @@ for i = 1:nOuter
     disp(['Outer Validation Error = ' num2str( valResult(i) )]);
     
     % plot over distribution for all folds up to this point
-    [ optFinal, ~, summaryFig ]= plotOptDist( ...
-                                    optXTraceInter(1:c1,:), ...
+    [ opt.Final, ~, summaryFig ]= plotOptDist( ...
+                                    opt.XTraceInter(1:c1,:), ...
                                     paramDef, ...
                                     setup, ...
                                     summaryFig, ...
-                                    optFold(1:c1) );
+                                    opt.Fold(1:c1) );
                                 
 end
 
 % assemble output structure
-output.optimum = optFinal;
 output.estimate = mean( valResult );
 output.valFolds = valResult;
-output.optXFinal = optXFinal;
-output.optXTraceInter = optXTraceInter;
-output.optXTraceFull = optXTrace;
-output.EstYTrace = optEstYTrace;
-output.EstYCITrace = optEstYCITrace;
-output.ObsYTrace = optObsYTrace;
-output.searchXTrace = srchXTrace;
-output.searchYTrace = srchYTrace;
-output.objFnTimeTrace = srchObjFnTimeTrace;
-output.optFitTimeTrace = optFitTimeTrace;
-output.optPSOTimeTrace = optPSOTimeTrace;
-
+output.optima = opt;
+output.search = srch;
 
 end
 
