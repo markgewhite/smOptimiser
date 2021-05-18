@@ -67,11 +67,11 @@
 %           optimum:            optimal parameters for the objective function
 %           model:              Bayesian surrogate model structure
 %           opt:                optimisation record structure (PSO)
-%           search:             random search record sructure
+%           srch:               random search record sructure
 %
 % ************************************************************************
 
-function [ optimum, model, opt, search ] = ...
+function [ optimum, model, opt, srch ] = ...
                     smOptimiser( objFn, paramDef, setup, data, options )
 
 
@@ -201,15 +201,15 @@ for i = 1:nParams
 end                       
 
 % initialisation
-search.XTrace = table( ...
+srch.XTrace = table( ...
                 'Size', [setup.nFit*setup.nSearch, nParams], ...
                 'VariableTypes', paramInfo.varType, ...
                 'VariableNames', paramInfo.name );
-search.XTraceIndex = zeros( setup.nFit*setup.nSearch, nParams );
-search.YTrace = zeros( setup.nFit*setup.nSearch, 1 );
-search.objFnTimeTrace = zeros( setup.nFit*setup.nSearch, 1 );
-search.delta = zeros( setup.nFit*setup.nSearch, 1 );
-search.nTries = zeros( setup.nFit*setup.nSearch, 1 );
+srch.XTraceIndex = zeros( setup.nFit*setup.nSearch, nParams );
+srch.YTrace = zeros( setup.nFit*setup.nSearch, 1 );
+srch.objFnTimeTrace = zeros( setup.nFit*setup.nSearch, 1 );
+srch.delta = zeros( setup.nFit*setup.nSearch, 1 );
+srch.nTries = zeros( setup.nFit*setup.nSearch, 1 );
 
 opt.XTrace = table( ...
                 'Size', [setup.nFit, nParams], ...
@@ -258,7 +258,7 @@ for k = 1:setup.nFit
                 % random search
                 [ params, indices, delta, nTries ] = randomParams( ...
                                     paramDef, paramInfo, model, ...
-                                    search.YTrace( max(c-w+1,1):c ), ...
+                                    srch.YTrace( max(c-w+1,1):c ), ...
                                     opt.maxLossTrace( max(k-1,1) ), ...
                                     setup.porousness, ...
                                     setup.maxTries, rndQ );     
@@ -284,12 +284,12 @@ for k = 1:setup.nFit
 
         % record observation
         c = c+1;
-        search.objFnTimeTrace( c ) = toc;
-        search.YTrace( c ) = min( obs, setup.cap );
-        search.XTrace( c, : ) = params;
-        search.XTraceIndex( c, : ) = indices;
-        search.delta( c ) = delta;
-        search.nTries( c ) = nTries;
+        srch.objFnTimeTrace( c ) = toc;
+        srch.YTrace( c ) = min( obs, setup.cap );
+        srch.XTrace( c, : ) = params;
+        srch.XTraceIndex( c, : ) = indices;
+        srch.delta( c ) = delta;
+        srch.nTries( c ) = nTries;
         if j == 1 && k > 1
             % record observation to compare with estimated value
             opt.ObsYTrace( k-1 ) = obs;
@@ -302,17 +302,19 @@ for k = 1:setup.nFit
     % fit the GP model to the observations
     tic;
     model = fitSurrogateModel(  model, paramInfo, ...
-                                search.XTraceIndex( 1:c, : ), ...
-                                search.YTrace( 1:c ), ...
-                                false );
+                                srch.XTraceIndex( 1:c, : ), ...
+                                srch.YTrace( 1:c ), ...
+                                setup.sigmaLB );
                             
-    if model.Sigma < setup.sigmaLB || model.Sigma > setup.sigmaUB
+    if model.Sigma > setup.sigmaUB
         % refit enforcing a constant sigma so that outliers are not ignored
-        fixedSigma = min( max( model.Sigma, setup.sigmaLB ), setup.sigmaUB );
+        % note: lower bound limit is already enforced in fitrgp
+        fixedSigma = min( model.Sigma, setup.sigmaUB );
         model = fitSurrogateModel(  model, paramInfo, ...
-                                    search.XTraceIndex( 1:c, : ), ...
-                                    search.YTrace( 1:c ), ...
-                                    true, fixedSigma );
+                                    srch.XTraceIndex( 1:c, : ), ...
+                                    srch.YTrace( 1:c ), ...
+                                    setup.sigmaLB, ...
+                                    fixedSigma );
     end
     
     opt.NoiseTrace( k ) = model.Sigma;
@@ -345,9 +347,12 @@ for k = 1:setup.nFit
     if setup.constrain
         % restrict search to loss less than a progressively reducing
         % proportion of the standard deviation added to the estimated min
-        alpha = (1 - k/setup.nFit);
-        opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
-                            alpha*std( search.YTrace( max(c-w+1,1):c) );
+        %alpha = (1 - k/setup.nFit);
+        %opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
+        %                    alpha*std( srch.YTrace( max(c-w+1,1):c) );
+        %alpha = 25*(1 - k/setup.nFit);
+        %opt.maxLossTrace( k ) = prctile( srch.YTrace(1:c), alpha );
+        opt.maxLossTrace( k ) = prctile( srch.YTrace(1:c), 0 );
     end
     
     % make interim reports
@@ -357,10 +362,10 @@ for k = 1:setup.nFit
                     '; noise = ' num2str( opt.NoiseTrace(k) )] );
     end
     if setup.verbose > 1
-        figPerf = plotOptPerf( search, opt, figPerf );
+        figPerf = plotOptPerf( srch, opt, figPerf );
     end
     if setup.verbose > 2
-        figSearch = plotOptSearch( search.XTraceIndex, opt.XTraceIndex, ...
+        figSearch = plotOptSearch( srch.XTraceIndex, opt.XTraceIndex, ...
                                     paramDef, figSearch );
     end
     if setup.verbose > 3
@@ -509,11 +514,11 @@ end
 
 
 
-function model = fitSurrogateModel( prevModel, var, X, Y, fixSigma, sigma )
+function model = fitSurrogateModel( prevModel, var, X, Y, sigmaLB, sigma )
 
-if nargin < 6
+fixSigma = (nargin == 6);
+if ~fixSigma
     sigma = 0.5;
-    fixSigma = false;
 end
 
 if isempty( prevModel ) || fixSigma
@@ -526,6 +531,7 @@ if isempty( prevModel ) || fixSigma
                 'KernelFunction', 'ARDMatern52', ...
                 'Standardize', false, ...
                 'Sigma', sigma, ...
+                'SigmaLowerBound', sigmaLB, ...
                 'ConstantSigma', fixSigma );
 
 else
@@ -546,6 +552,7 @@ else
                 'KernelFunction', 'ARDMatern52', ...
                 'Standardize', false, ...
                 'Sigma', prevModel.Sigma, ...
+                'SigmaLowerBound', sigmaLB, ...
                 'Beta', prevModel.Beta, ...
                 'KernelParameters', prevModel.KernelInformation.KernelParameters );
 
@@ -559,6 +566,7 @@ else
                 'KernelFunction', 'ARDMatern52', ...
                 'Standardize', false, ...
                 'Sigma', prevModel.Sigma, ...
+                'SigmaLowerBound', sigmaLB, ...
                 'Beta', prevModel.Beta );
 
     end
