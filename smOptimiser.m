@@ -346,13 +346,10 @@ for k = 1:setup.nFit
     
     if setup.constrain
         % restrict search to loss less than a progressively reducing
-        % proportion of the standard deviation added to the estimated min
-        %alpha = (1 - k/setup.nFit);
-        %opt.maxLossTrace( k ) = opt.EstYTrace( k ) + ...
-        %                    alpha*std( srch.YTrace( max(c-w+1,1):c) );
-        %alpha = 25*(1 - k/setup.nFit);
-        %opt.maxLossTrace( k ) = prctile( srch.YTrace(1:c), alpha );
-        opt.maxLossTrace( k ) = prctile( srch.YTrace(1:c), 0 );
+        alpha = max( (1 - 2*k/setup.nFit), 0);
+        opt.maxLossTrace( k ) = ...
+            max( min(srch.YTrace( 1:c)), opt.EstYTrace(k) ) + ...
+                            alpha*std( srch.YTrace( max(c-w+1,1):c) );
     end
     
     % make interim reports
