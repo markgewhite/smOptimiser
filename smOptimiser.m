@@ -158,6 +158,7 @@ end
 % identify only the active variables requiring optimisation
 paramDef = paramDef( activeVarDef(paramDef) );
 nParams = length( paramDef );
+   
 
 % add extra definitions (for speed)
 paramInfo.name = cell( 1, nParams );
@@ -165,10 +166,11 @@ paramInfo.varType = cell( 1, nParams );
 paramInfo.isCat = false( 1, nParams );
 paramInfo.doRounding = false( 1, nParams );
 paramInfo.nLevels = zeros( 1, nParams );
-paramInfo.lowerBound = zeros( 1, nParams );
-paramInfo.upperBound = zeros( 1, nParams );
+paramInfo.psoLB = zeros( 1, nParams );
+paramInfo.psoUB = zeros( 1, nParams );
 for i = 1:nParams
 
+    v = setup.activeVar(i);
     paramInfo.name{i} = paramDef(i).Name;
     switch paramDef(i).Type
         
@@ -177,8 +179,8 @@ for i = 1:nParams
             paramInfo.isCat(i) = true;
             paramInfo.doRounding(i) = true;
             paramInfo.nLevels(i) = length( paramDef(i).Range );
-            paramInfo.lowerBound(i) = 0.5;
-            paramInfo.upperBound(i) = paramInfo.nLevels(i)+0.49;
+            paramInfo.psoLB(i) = 0.5;
+            paramInfo.psoUB(i) = paramInfo.nLevels(i)+0.49;
 
         case 'integer'
             paramInfo.varType{i} = 'double';
@@ -186,15 +188,15 @@ for i = 1:nParams
             paramInfo.doRounding(i) = true;
             paramInfo.nLevels(i) = paramDef(i).Range(2)- ...
                                         paramDef(i).Range(1)+1;
-            paramInfo.lowerBound(i) = paramDef(i).Range(1);
-            paramInfo.upperBound(i) = paramDef(i).Range(2);
+            paramInfo.psoLB(i) = setup.bounds{v}(1);
+            paramInfo.psoUB(i) = setup.bounds{v}(2);
             
         case 'real'
             paramInfo.varType{i} = 'double';
             paramInfo.isCat(i) = false;
             paramInfo.doRounding(i) = false;
-            paramInfo.lowerBound(i) = paramDef(i).Range(1);
-            paramInfo.upperBound(i) = paramDef(i).Range(2);
+            paramInfo.psoLB(i) = setup.bounds{v}(1);
+            paramInfo.psoUB(i) = setup.bounds{v}(2);
             
     end
 
@@ -234,8 +236,8 @@ optimumR = zeros( 1, nParams);
 
 if setup.quasiRandom
     % generate a quasi-random sequence with required dimensions
-    rndSeq = haltonset( nParams, 'Skip', 1000, 'Leap', 100);
-    rndSeq = scramble( rndSeq, 'RR2' );
+    rndSeq = sobolset( nParams, 'Skip', 1000, 'Leap', 0);
+    rndSeq = scramble( rndSeq, 'MatousekAffineOwen' );
     rndQ = qrandstream( rndSeq );
 else
     rndQ = 0;
@@ -328,8 +330,8 @@ for k = 1:setup.nFit
 
     optimum = particleswarm(    objFcn, ...
                                 nParams, ...
-                                paramInfo.lowerBound, ...
-                                paramInfo.upperBound, ...
+                                paramInfo.psoLB, ...
+                                paramInfo.psoUB, ...
                                 optionsPSO );
 
     % enforce rounding of categorical or integer parameters
@@ -430,11 +432,11 @@ function [ p, pIndex, delta, nTries ] = randomParams( pDef, pInfo, ...
                 case 'categorical'
                     pIndex(i) = rndCat( pInfo.nLevels(i), r(i) );
                 case 'integer'
-                    pIndex(i) = rndInt( pInfo.lowerBound(i), ...
-                                         pInfo.upperBound(i), r(i) );
+                    pIndex(i) = rndInt( pInfo.psoLB(i), ...
+                                         pInfo.psoUB(i), r(i) );
                 case 'real'
-                    pIndex(i) = rndReal( pInfo.lowerBound(i), ...
-                                         pInfo.upperBound(i), r(i) );
+                    pIndex(i) = rndReal( pInfo.psoLB(i), ...
+                                         pInfo.psoUB(i), r(i) );
             end               
         end
 

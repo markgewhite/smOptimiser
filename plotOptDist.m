@@ -16,10 +16,6 @@
 %                               optimizableVariables
 %
 %           setup               options
-%               .nLast:         number of observations to include from
-%                               the end of the each trace grouping;
-%                               if 0 then include all observations
-%                               (default = 0)
 %               .showPlots:     whether to plot distributions
 %                               (default = false)
 %               .useGroups:     whether to use grouping in plots
@@ -39,7 +35,7 @@
 % ************************************************************************
 
 function [ XOptimum, XFreq, figRef ] = ...
-                plotOptDist( XTrace, varDef, setup, figRef, group )
+                plotOptDist( XTrace, varDef, setup, figRef, group, weight )
             
 % parse arguments
 if nargin < 2
@@ -52,20 +48,20 @@ end
 
 
 % set option defaults where required
-if isfield( setup, 'nLast' )
-    if setup.nLast <= 0 || isinteger( setup.nLast )
-        error('Options: nLast must be a positive integer.');
-    end
-else
-    setup.nLast = 0; % default
-end
-
 if isfield( setup, 'showPlots' )
     if ~islogical( setup.showPlots )
         error('Options: showPlots must be Boolean.');
     end
 else
-    setup.showPlots = false; % default
+    setup.showPlots = true; % default
+end
+
+if isfield( setup, 'useSubPlots' )
+    if ~islogical( setup.showPlots )
+        error('Options: useSubPlots must be Boolean.');
+    end
+else
+    setup.useSubPlots = true; % default
 end
 
 if isfield( setup, 'useGroups' )
@@ -101,7 +97,11 @@ if setup.showPlots
     end
 end
 
-if nargin < 5
+if nargin < 6
+    weight = ones( nObs, 1 ); %default
+end
+
+if nargin < 5 || isempty( group )
     group = ones( nObs, 1 ); % default
 end
 
@@ -129,6 +129,9 @@ for i = 1:nVar
     if strcmpi( varDef(i).Type, 'categorical' )
         
         % categorical variable
+        
+        % applies weights
+        
               
         % count the frequencies for the ith variable
         cTable = groupcounts( XTrace, i );
@@ -162,7 +165,8 @@ for i = 1:nVar
         % determine overall PDF
         YPDF = fitdist( XTrace.(varName), 'Kernel', ...
                                'Kernel', 'Normal', ...
-                               'Width', 0.1*XFitBorder );                
+                               'Width', 0.1*XFitBorder, ...
+                               'Frequency', weight );                
         YAll = pdf( YPDF, XFit );
         YTotal = sum( YAll );
 
@@ -194,6 +198,7 @@ for i = 1:nVar
 end
 
 XOptimum = XOptimum( :, 1:end-1 );
+XFreq = XFreq( :, 1:end-1 );
 
 end
 
@@ -262,7 +267,7 @@ function plotPDF( Y, varDef, XFit, YTotal )
         
     % label vertical axis
     ylabel( 'Probability Density' );
-    ytickformat( '%1.2f' );
+    ytickformat( '%1.3f' );
     
     drawnow;
 
@@ -314,7 +319,7 @@ function plotLayeredPDF( X, varDef, YTotal )
     
     % label vertical axis
     ylabel( 'Probability Density' );
-    ytickformat( '%1.2f' );
+    ytickformat( '%1.3f' );
     
     drawnow;
         

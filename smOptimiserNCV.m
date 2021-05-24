@@ -126,7 +126,7 @@ for i = 1:nOuter
         srch.XTrace( a0:a1, : ) = srchOutput.XTrace;
         srch.XTraceIndex( a0:a1, : ) = srchOutput.XTraceIndex;
         srch.YTrace( a0:a1 ) = srchOutput.YTrace;
-        srch.ObjFnTimeTrace( a0:a1 ) = srchOutput.YTrace;
+        srch.ObjFnTimeTrace( a0:a1 ) = srchOutput.objFnTimeTrace;
         
         opt.XTrace( b0:b1, : ) = optOutput.XTrace;       
         opt.XTraceIndex( b0:b1, : ) = optOutput.XTraceIndex;
