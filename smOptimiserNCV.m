@@ -74,6 +74,9 @@ opt.EstYCITrace = zeros( nOuter*nRepeats*nInner, 1 );
 
 opt.XTraceInter = setupOptTable( paramDef, nOuter*nRepeats*nInter );
 opt.XTraceIndexInter = zeros( nOuter*nRepeats*nInter, nParams );
+opt.YTraceOuter = zeros( nOuter*nRepeats*nInter, 1 );
+opt.constraints = cell( nOuter*nRepeats*nInter, 1 );
+opt.validModel = false( nOuter*nRepeats*nInter, 1 );
 
 opt.Fold = zeros( nOuter*nRepeats*nInter, 1 );
 opt.XFinal = setupOptTable( paramDef, nOuter );
@@ -144,17 +147,33 @@ for i = 1:nOuter
               
     end
     
+    % find the outer validation error for intermediate models
+    for j = 1:nInter*nRepeats
+        [ opt.YTraceOuter( c1-j+1 ), opt.constraints{ c1-j+1 } ] = ...
+                                objFcn( opt.XTraceInter( c1-j+1,:), ...
+                                        data, ...
+                                        options, ...
+                                        trnSelect(:,i) );
+        opt.validModel( c1-j+1 ) = all( opt.constraints{ c1-j+1 }<=0 );
+    end
+    
+    
     m = m + 1;
-    % determine optimal parameters for this outer fold
+    % determine ensemble optimal parameters for this outer fold
     temp = setup.showPlots;
     setup.showPlots = false;     % temporarily disable plotting
+    
+    % select models, excluding invalid ones
+    modelIdx = c1-nRepeats*nInter+1:c1;
+    modelIdx = modelIdx( opt.validModel( modelIdx ) );
     opt.XFinal(m,:) = plotOptDist( ...
-                                opt.XTraceInter(c1-nRepeats*nInter+1:c1,:), ...
+                                opt.XTraceInter( modelIdx, : ), ...
                                 paramDef, ...
                                 setup, ...
                                 [] );
     setup.showPlots = temp;
     
+    % find the outer validation error for this ensemble model
     valResult(i) = objFcn( opt.XFinal(m,:), ...
                                    data, ...
                                    options, ...
@@ -163,12 +182,14 @@ for i = 1:nOuter
     disp(['Outer Validation Error = ' num2str( valResult(i) )]);
     
     % plot over distribution for all folds up to this point
+    modelIdx = 1:c1;
+    modelIdx = modelIdx( opt.validModel( modelIdx ) );
     [ opt.Final, ~, summaryFig ]= plotOptDist( ...
-                                    opt.XTraceInter(1:c1,:), ...
+                                    opt.XTraceInter( modelIdx, : ), ...
                                     paramDef, ...
                                     setup, ...
                                     summaryFig, ...
-                                    opt.Fold(1:c1) );
+                                    opt.Fold( modelIdx ) );
                                 
 end
 
