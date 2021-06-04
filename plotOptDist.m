@@ -35,7 +35,7 @@
 % ************************************************************************
 
 function [ XOptimum, XFreq, figRef ] = ...
-                plotOptDist( XTrace, varDef, setup, figRef, group, weight )
+                plotOptDist( XTrace, varDef, setup, figRef, group )
             
 % parse arguments
 if nargin < 2
@@ -72,9 +72,29 @@ else
     setup.useGroups = false; % default
 end
 
+if ~isfield( setup, 'layout' )
+    setup.layout = 'square'; % default
+end
+
+if ~isfield( setup, 'transform' )
+    setup.transform = true; % default
+end
+
 % get dimensions
 [nObs, nVar] = size( XTrace );
 
+
+if setup.transform
+    if isfield( setup, 'descr' ) && ...
+            isfield( setup, 'fcn' ) && ...
+            isfield( setup, 'bounds' )
+        % extend varDef to include these fields
+        varDef = extendVarDef( varDef, setup );
+    else
+        % some requisite fields are missing
+        error('Insufficient fields for plot transformation: descr, fcn, bounds.');
+    end 
+end
 
 % extract only the active variables
 varDef = varDef( activeVarDef(varDef) );
@@ -82,8 +102,22 @@ if nVar ~= length( varDef )
     error('The number optimizable variables (varDef) does not match the XTrace');
 end
 
+
+
 if setup.showPlots
-    [ plotRows, plotCols ] = sqdim( nVar );
+    
+    % setup the layout of the plots
+    switch setup.layout
+        case 'square'
+            [ plotRows, plotCols ] = sqdim( nVar );
+        case 'vertical'
+            plotRows = nVar;
+            plotCols = 1;
+        case 'horizontal'
+            plotRows = 1;
+            plotCols = nVar;
+    end
+    
     if isempty( figRef )
         % setup figures - one time only
         if setup.useSubPlots
@@ -95,10 +129,6 @@ if setup.showPlots
             end   
         end
     end
-end
-
-if nargin < 6
-    weight = ones( nObs, 1 ); %default
 end
 
 if nargin < 5 || isempty( group )
@@ -117,10 +147,6 @@ XOptimum = XTrace(1,:); % (the actual values with be updated)
 XFreq = zeros( 1, size(XOptimum,2) );
 
 nPts = 401;
-if setup.useSubPlots
-
-end
-
 
 for i = 1:nVar
     
@@ -128,10 +154,7 @@ for i = 1:nVar
     
     if strcmpi( varDef(i).Type, 'categorical' )
         
-        % categorical variable
-        
-        % applies weights
-        
+        % categorical variable       
               
         % count the frequencies for the ith variable
         cTable = groupcounts( XTrace, i );
@@ -148,7 +171,11 @@ for i = 1:nVar
             else
                 figure( figRef(i) );
             end
-            plotFreq( XTrace, varDef(i) );
+            if nGroups == 1
+                plotFreq( XTrace, varDef(i) );
+            else
+                plotLayeredFreq( XTrace, varDef(i) );
+            end
         end
         
     else
@@ -165,8 +192,7 @@ for i = 1:nVar
         % determine overall PDF
         YPDF = fitdist( XTrace.(varName), 'Kernel', ...
                                'Kernel', 'Normal', ...
-                               'Width', 0.1*XFitBorder, ...
-                               'Frequency', weight );                
+                               'Width', 0.2*XFitBorder );                
         YAll = pdf( YPDF, XFit );
         YTotal = sum( YAll );
 
@@ -203,11 +229,83 @@ XFreq = XFreq( :, 1:end-1 );
 end
 
 
-
 function plotFreq( X, varDef )
+ 
+    % set colour
+    colour = [0 0.4470 0.7410];
+    highlight = [0.4940 0.1840 0.5560];
+    
+    % set plot attributes
+    attr = setPlotAttr( varDef );
+    
+    nCat = length( varDef.Range );
+    
+    % insert all categories at the beginning to ensure all are present
+    XInsert = repelem( X(1,:), nCat, 1 );
+    for i = 1:nCat
+        XInsert.(varDef.Name)(i) = varDef.Range{i};
+    end
+        
+    % count the number of models for ith var, grouped by fold
+    cTable = groupcounts( [X; XInsert], varDef.Name );
+    
+    % sort into standard order by adding numeric category
+    cTable.level = zeros( height(cTable), 1 );
+    for i = 1:height(cTable)
+        cTable.level(i) = find( cTable.(varDef.Name)(i)==varDef.Range );
+    end
+    cTable = sortrows( cTable, 'level' );
+
+    % extract the totals remembering that extras were added
+    c = cTable.GroupCount-1;
+
+    % convert to percentages
+    cPct = 100*c./sum( c, 'all' );
+    
+    % separate the category with the highest frequency
+    [~, top] = max( cPct );
+    cPct = [ cPct zeros(length(cPct), 1) ];
+    cPct( top, : ) = [ 0 cPct( top, 1 ) ];
+       
+    % now plot the chart
+    barObj = bar( cPct, 'Stacked', ...
+                        'FaceAlpha', 0.2, ...
+                        'FaceColor', 'flat', ...
+                        'LineWidth', 1 );
+                                          
+    % highlight category with highest frequency
+
+    barObj(1).FaceAlpha = 0.2;
+    barObj(1).CData = colour;
+    barObj(1).EdgeColor = colour;
+    
+    barObj(2).FaceAlpha = 1;
+    barObj(2).CData = highlight;
+    barObj(2).EdgeColor = colour;
+    
+    xticklabels( varDef.Range );
+    xlabel( attr.XLabel );   
+    ylabel( 'Proportion (%)' );
+    
+    set( gca, 'Box', false' );
+    set( gca, 'TickDir', 'out' );
+    set( gca, 'LineWidth', 1 );
+    set( gca, 'FontName', 'Arial' );
+    set( gca, 'FontSize', 8 );
+    
+    drawnow;
+    
+end
+
+
+
+function plotLayeredFreq( X, varDef )
  
     colourRGB = getColours;
     nCol = size( colourRGB, 1 );
+    
+    % set plot attributes
+    attr = setPlotAttr( varDef );
     
     uniqueGroups = unique(X.groupVar);
     nGroups = length( uniqueGroups );
@@ -248,6 +346,7 @@ function plotFreq( X, varDef )
     end
 
     xticklabels( varDef.Range );
+    xlabel( attr.XLabel );  
     ylabel( 'Proportion (%)' );
         
     drawnow;
@@ -256,18 +355,59 @@ end
 
 
 function plotPDF( Y, varDef, XFit, YTotal )
+
+    % set colour
+    colour = [0 0.4470 0.7410];
+    highlight = [0.4940 0.1840 0.5560];
+    
+    % set plot attributes
+    attr = setPlotAttr( varDef );
+    
+    % transform X
+    XPlot = attr.XFcn( XFit );
     
     % plot the probability density function
-    Y = Y/YTotal;
-    plot( XFit, Y, 'k-', 'LineWidth', 1.5 );
+    % fill the area so reverse X and Y are needed
+    Y = 1000*Y/YTotal;
+    XRev = [ XPlot; flipud(XPlot) ];
+    YRev= [ Y; -0.1*ones(length(Y),1) ];
     
+    fill( XRev, YRev, colour, ...
+                      'FaceAlpha', 0.2, ...
+                      'EdgeColor', colour, ...
+                      'LineWidth', 1 );
+    
+    % highlight peak position
+    hold on;
+    [ ~, peakID ] = max(Y);
+    XPeak = XPlot( peakID );
+    plot( [XPeak, XPeak], [0, Y(peakID)], ...
+                'Color', highlight, 'LineWidth', 2 );
+    peakLabelX = XPlot( peakID+5 );
+    peakLabelY = 1.8;
+    switch varDef.Type
+        case 'integer'
+            peakLabel = num2str( XPeak, '%1.0f' );
+        case 'real'
+            peakLabel = num2str( XPeak, '%1.2f' );
+    end
+    text( peakLabelX, peakLabelY, peakLabel, ...
+                'FontName', 'Arial', ...
+                'FontSize', 8 );
+                  
     % set limits
-    xlim( varDef.Range );
-    xlabel( varDef.Name );
+    xlim( attr.XLim );
+    ylim( [0, 20] );
         
-    % label vertical axis
-    ylabel( 'Probability Density' );
-    ytickformat( '%1.3f' );
+    % label axes
+    xlabel( attr.XLabel );
+    ylabel( 'Prob. Density (\times10^3)' );
+    
+    set( gca, 'Box', false' );
+    set( gca, 'TickDir', 'out' );
+    set( gca, 'LineWidth', 1 );
+    set( gca, 'FontName', 'Arial' );
+    set( gca, 'FontSize', 8 );
     
     drawnow;
 
@@ -299,7 +439,7 @@ function plotLayeredPDF( X, varDef, YTotal )
         % compute probability density function
         YPDF = fitdist( XSub , 'Kernel', ...
                             'Kernel', 'Normal', ...
-                            'Width', 0.1*XFitBorder );                
+                            'Width', 0.2*XFitBorder );                
         Y = pdf( YPDF, XPlot )*YProp/YTotal;
 
         % draw shaded area
@@ -324,7 +464,7 @@ function plotLayeredPDF( X, varDef, YTotal )
     drawnow;
         
 end
-
+     
 
 function colourRGB = getColours
 
