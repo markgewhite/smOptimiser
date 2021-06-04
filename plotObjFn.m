@@ -18,159 +18,151 @@
 %
 % ************************************************************************
 
-function figRef = plotObjFn( v, optimum, XTrace, varDef, model, opt, figRef )
-
-% constants
-cmap = colorcube(64);
-cmap2 = colorcube(16);
+function figRef = plotObjFn( XOptimum, models, setup, ...
+                             activeVar, plotVar, figRef )
 
         
 % defaults
-if ~isfield( opt, 'overlapFactor' )
-    opt.overlapFactor = 0.75;
-end
-if ~isfield( opt, 'contourStep' )
-    opt.contourStep = 0.2;
-end
-if ~isfield( opt, 'contourType' )
-    opt.contourType = 'Lines';
+if ~isfield( setup, 'overlapFactor' )
+    setup.overlapFactor = 0.75; % default
 end
 
-% create figure if it doesn't already exist
-if isempty( figRef )
-    figRef = figure;
+if ~isfield( setup, 'contourStep' )
+    setup.contourStep = 0.2; % default
+end
+
+if ~isfield( setup, 'contourType' )
+    setup.contourType = 'Lines'; % default
+end
+
+if ~isfield( setup, 'transform' )
+    setup.transform = true; % default
+end
+
+if ~isfield( setup, 'layout' )
+    setup.layout = 'square'; % default
+end
+
+if isfield( setup, 'useSubPlots' )
+    if ~islogical( setup.showPlots )
+        error('Options: useSubPlots must be Boolean.');
+    end
 else
-    figure( figRef );
+    setup.useSubPlots = true; % default
 end
 
+% switch to the requested optimizable variables
+varDef = switchActiveVarDef( setup.varDef, activeVar );
 
-% ----------------------------------------------------------------
-%  Prepare data
-% ----------------------------------------------------------------        
-
-% extract the valid points
-
-validPts = XTrace ~= 0;       
-
-nVar = length( v );
-if nVar < 1 || nVar >2
-    error('Incorrect number of variables for plotting');
-end
-
-isCat = false( nVar, 1 );
-for i = 1:nVar
-    isCat(i) = strcmp( varDef{i}.Type, 'categorical' );
-end
-
-
-[ XFit, XPlot, nPts ] = fineMesh( nVar, varDef );
-
-[ XMeshFit, XMeshPlot ] = fineMeshMultiDim( nVar, XFit, XPlot );
-
-
-%  Generate and plot each optimum
-nOpt = size( optimum, 1 );
-for j = 1:nOpt
-
-    % set the optimum fit and plot parameters
-    optimaFit = optimum(j,:);
-    optimaPlot = zeros( 1, nVar );
-    for i = 1:nVar
-        if isCat(i)
-            optimaPlot(i) = optimaFit( v(i) );              
-        else           
-            optimaPlot(i) = results.fcn{v(i)}( optimum(j,v(i)) );
-            if strcmp( varDef.Transform(i), 'log' )
-                optimaPlot(i) = log10( optimaPlot(i) );
-            end
-        end
-    end
-
-    % create the full predictor table (index representation)
-    XLongFit = repmat( optimum(j,:), prod(nPts), 1 );
-
-    % turn them into a long array for predictions
-    % and place them in the full predictor table
-    for i=1:nVar
-        XLongFit( :, v(i) ) = reshape( XMeshFit(:,:,i), prod(nPts), 1 );
-    end
-
-    % predict the losses from the model (which is based on indices)
-    [ YLong, YCI ] = predict( model, XLongFit );
-    [ YOpt, YOptCI ] = predict( model, optimaFit );
-    noise = model.Sigma;
-
-    YOptMax = YOpt+opt.overlapFactor*YOptCI;
-
-    ax = gca;
-    pRef = [];
-    switch nVar
-        case 1
-            pRef = plotFn1D( XMeshPlot, YLong, YCI, YOptMax, ...
-                                noise, cmap, cmap2, opt );
-
-        case 2
-            pRef = plotFn2D( XMeshPlot, YLong, YOptMax, nPts, opt );
-
-    end
-
-
-    hold off;
-    if ~isempty(pRef)
-        legend( pRef, 'Location', 'best' );
-        legend( 'boxoff' );
-    end
-
-    % set the axes' limits and tick values
-    xlim( varDef{v(1)}.Range );
-    xlabel( results.descr( v(1) ) );
-    if nVar == 1
-        ylim( opt.lossLim );
-        yticks( opt.lossLim(1):opt.lossLim(2) );
-        ylabel( opt.objectiveDescr );
+% add extra fields if transformation required
+if setup.transform
+    if isfield( setup, 'descr' ) && ...
+            isfield( setup, 'fcn' ) && ...
+            isfield( setup, 'bounds' )
+        % extend varDef to include these fields
+        varDef = extendVarDef( varDef, setup );
     else
-        ylim( results.lim{ v(2) } );
-        ylabel( results.descr( v(2) ) );
+        % some requisite fields are missing
+        error('Insufficient fields for plot transformation: descr, fcn, bounds.');
+    end 
+end
+
+% select the appropriate XTrace fields to match
+XOptimum = retainActiveVar( XOptimum, varDef );
+
+% shortlist to only active variables
+varDef = varDef( activeVarDef(varDef) );
+
+% back-transform the XOptimum table into indices
+XOptimum = varDefIndex( XOptimum, varDef );
+nVar = size( XOptimum, 2 );
+
+if nVar ~= length( varDef )
+    error('The number optimizable variables (varDef) does not match the XOptimum.');
+end
+
+
+
+% setup the layout of the plots
+nPlots = length( plotVar );
+switch setup.layout
+    case 'square'
+        [ plotRows, plotCols ] = sqdim( nPlots );
+    case 'vertical'
+        plotRows = nPlots;
+        plotCols = 1;
+    case 'horizontal'
+        plotRows = 1;
+        plotCols = nPlots;
+end
+
+if isempty( figRef )
+    % setup figures - one time only
+    if setup.useSubPlots
+        figRef = figure;
+    else
+        figRef = gobjects( nPlots, 1 );
+        for i = 1:nPlots
+            figRef(i) = figure;
+        end   
     end
+end
 
-    if isCat(1)
-        xTickNum = unique( round(XPlot{1}) );
-        xticks( xTickNum );
-        if isBoolean(1)
-            xticklabels( {'False', 'True'} );
-            ax.XAxis.MinorTickValues = 2.5;
-        else
-            xticklabels( results.varDef{v(1)}.Range );
-            ax.XAxis.MinorTickValues = xTickNum(1:end-1)+0.5;
-        end
+%  other initialisation
+nModels = length( models );
+
+% optimal Y predictions and confidence interval
+YHatOpt = zeros( 1, nModels );
+YHatOptCI = zeros( 1, nModels );
+
+YNoise = zeros( 1, nModels );
+
+% plot the objective function for each variable
+for i = 1:nPlots
+    
+    % set the parameter than will be varied (others held constant)
+    k = plotVar(i);
+    
+    % get a mesh of X points in original and transformed scales
+    [ XFit, XPlot, XLim ] = fineMesh( varDef(k) );
+    nPts = length( XFit );
+    
+    % create the full predictor table (index representation)
+    X = repmat( XOptimum, nPts, 1 );
+
+    % replace the i-th column with the XFit mesh
+    X(:,k) = XFit;
+    
+    % init Y predictions for variation in X in one dimension across models
+    YHat = zeros( nPts, nModels );
+    YHatCI = zeros( nPts, nModels );
+    
+    % predict the objective function using all models
+    for j = 1:nModels
+        [ YHat(:,j), YHatCI(:,j) ] = predict( models{j}, X );
+        [ YHatOpt(j), YHatOptCI(j) ] = predict( models{j}, XOptimum );
+        YNoise(1,j) = models{j}.Sigma;
     end
-
-    if nVar >= 2
-
-        if isCat(2)
-            yTickNum = unique( round(XPlot{2}) );
-            yticks( yTickNum );
-            if isBoolean(2)
-                yticklabels( {'False', 'True'} );
-                ax.YAxis.MinorTickValues = 2.5;
-            else
-                yticklabels( results.varDef{v(2)}.Range );
-                ax.YAxis.MinorTickValues = yTickNum(1:end-1)+0.5;
-            end
-        end
-
+    
+    % aggregate predictions based on the median to avoid outlier influence
+    YHatBag = mean( YHat, 2 );
+    YHatCIBag = sqrt( sum( YHatCI.^2, 2 ) )/nModels;
+    YHatOptBag = mean( YHatOpt );
+    YHatOptCIBag = sqrt( sum( YHatOptCI.^2 ) )/nModels;
+    YNoiseBag = sqrt( sum( YNoise.^2 ) )/nModels;
+    
+    % prepare the figure or subplot
+    if setup.useSubPlots
+        figure( figRef );
+        subplot( plotRows, plotCols, i );
+    else
+        figure( figRef(i) );
     end
+    
+    % plot the surrogate function
+    plotFn( XPlot, YHatBag, YHatCIBag, YNoiseBag, varDef(k) );
 
-    % set preferred properties
-    ax.FontName = opt.plot.font;
-    set( gca, 'FontSize', opt.plot.fontSize );
-    set( gca, 'XTickLabelRotation', opt.plot.xLabelRotation );
-    set( gca, 'LineWidth', opt.plot.lineWidth );
-    set( gca, 'Box', opt.plot.box );
-    set( gca, 'TickDir', opt.plot.tickDirection );
-
-    drawnow;
-
+end
 
 
 end
@@ -178,225 +170,110 @@ end
 
 
 
+function [ XFit, XPlot, limPlot ] = fineMesh( varDef )
 
-end
-
-
-
-
-
-function [ XFit, XPlot, nPts ] = fineMesh( nVar, varDef )
-
-
-% create fine mesh for each variable 
+% create fine mesh for a given variable
 % for the original ranges
 % and for the index representation
-nMesh = 200;
-XFit = cell( nVar, 1 );
-XPlot = cell( nVar, 1 );
-nPts = zeros( nVar, 1 );
-for i = 1:nVar
-    limFit(1) = round( varDef(v(i)).Range(1) );
-    limFit(2) = round( varDef(v(i)).Range(2) );
+nMesh = 201;
 
-    if strcmp( varDef.Type, 'categorical' )
+attr = setPlotAttr( varDef );
 
-        limPlot = limFit;
-        XFit{i} = twice( limFit(1):limFit(2), 0 )';
-        XPlot{i} = twice( limFit(1):limFit(2), 0.5 )';
+% limFit = varDef.Range; % round( attr.XLim );
 
-    else
+if strcmp( varDef.Type, 'categorical' )
 
-        limPlot(1) = results.fcn{v(i)}( limFit(1) );
-        limPlot(2) = results.fcn{v(i)}( limFit(2) );
-        if results.isLog(v(i))
-            limPlot = log10( limPlot );
-        end
-        hFit = ( limFit(2)-limFit(1) )/nMesh;
-        XFit{i} = (limFit(1):hFit:limFit(2))';
-        hPlot = ( limPlot(2)-limPlot(1) )/nMesh;
-        XPlot{i} = (limPlot(1):hPlot:limPlot(2))';
-
-    end
-
-    nPts(i) = length( XFit{i} );
-
-end
-
-end
-
-
-
-function [ XMeshFit, XMeshPlot ] = fineMeshMultiDim( nVar, XFit, XPlot )
-
-% transform into mesh for contour plots
-switch nVar
-    case 1
-        XMeshFit = XFit{1};
-        XMeshPlot = XPlot{1};
-
-    case 2
-        [ XMeshFit(:,:,1), XMeshFit(:,:,2) ] = ...
-                                    meshgrid( XFit{1}, XFit{2} );
-        [ XMeshPlot(:,:,1), XMeshPlot(:,:,2) ] = ...
-                                    meshgrid( XPlot{1}, XPlot{2} );
-
-    case 3
-        [ XMeshFit(:,:,1), XMeshFit(:,:,2), XMeshFit(:,:,3) ] = ...
-                        meshgrid( XFit{1}, XFit{2}, XFit{3} );
-        [ XMeshPlot(:,:,1), XMeshPlot(:,:,2), XMeshPlot(:,:,3) ] = ...
-                        meshgrid( XPlot{1}, XPlot{2}, XPlot{3} );
-end
-
-
-
-end
-
-
-
-function pRef = plotFn1D( XMeshPlot, YLong, YCI, YOptMax, noise, cmap, cmap2, opt )
-
-
-lineMap = [ cmap2(13,:); cmap2(12,:); cmap2(6,:); ...
-                        cmap2(8,:); cmap2(3,:); cmap2(2,:)];
-
-% find the limits about the optimum
-optIdx = YLong<=YOptMax;
-ubIdx = 1;
-
-while sum( optIdx(ubIdx:end) )>0 && ubIdx<length(optIdx)
+    limFit = [ 1 length(varDef.Range) ];
+    limPlot = limFit;
+    XFit = twice( limFit(1):limFit(2), 0 )';
     
-    % find lower bound
-    lbIdx = find( optIdx(ubIdx:end)==1, 1 )+ubIdx-1;
-    % find upper bound
-    ubIdx = find( optIdx(lbIdx:end)==0, 1 )+lbIdx-2;
-    if isempty( ubIdx )
-        ubIdx = length(optIdx);
-    end
-    
-    % draw shaded area
-    XOptPlotRev = [ XMeshPlot(lbIdx:ubIdx); ...
-                flipud(XMeshPlot(lbIdx:ubIdx)) ];
-    YOptPlotRev = [ YLong(lbIdx:ubIdx); ...
-                zeros(ubIdx-lbIdx+1,1) ];                    
-    pRef(4) = fill( XOptPlotRev, ...
-                 YOptPlotRev, ...
-                 cmap(63,:), ...
-                 'LineWidth', opt.plot.lineWidth, ...
-                 'DisplayName', 'Optimum Range' );
-    hold on;
+    XPlot = twice( limFit(1):limFit(2), 0.5 )';
 
-    ubIdx = ubIdx+1;
+else
+
+    limFit = varDef.Range;
+    limPlot = attr.XFcn( limFit );
+
+    hFit = ( limFit(2)-limFit(1) )/(nMesh-1);
+    XFit = (limFit(1):hFit:limFit(2))';
     
+    hPlot = ( limPlot(2)-limPlot(1) )/(nMesh-1);
+    XPlot = (limPlot(1):hPlot:limPlot(2))';
+
+end
+
 end
 
 
-% plot line graph showing confidence limits and noise
-XMeshPlotRev = [ XMeshPlot; flipud(XMeshPlot) ];
-YPlotCIRev = [ YLong-YCI; flipud(YLong+YCI) ];
 
-pRef(2) = fill( XMeshPlotRev, ...
-             YPlotCIRev, ...
-             cmap(25,:), ...
-             'LineWidth', opt.plot.lineWidth, ...
-             'DisplayName', 'Confidence Limits' );
+function pRef = plotFn( X, Y, YCI, YN, varDef )
+                  
+% set colour
+colour = [0 0.4470 0.7410];
+                    
+% prepare the wrap-around X and Y points
+XRev = [ X; flipud(X) ];
+YCIRev = [ Y-YCI; flipud(Y+YCI) ];
+YNRev = [ Y-YN; flipud(Y+YN) ];
 
-if ubIdx == 1
-    hold on; % for some reason no optimum range plotted
-end
+% plot the confidence interval
+pRef(2) = fill(  XRev, ...
+                 YCIRev, ...
+                 colour, ...
+                 'EdgeColor', 'none', ...
+                 'LineWidth', 1, ...
+                 'FaceAlpha', 0.2, ...
+                 'DisplayName', 'Confidence Limits' );
 
+hold on;
 
-YPlotNoiseRev = [ YLong-noise; flipud(YLong+noise) ];
-pRef(3) = fill( XMeshPlotRev, ...
-             YPlotNoiseRev, ...
-             cmap(30,:), ...
-             'LineWidth', opt.plot.lineWidth, ...
-             'DisplayName', 'Noise' );
+% plot the noise
+pRef(3) = fill(  XRev, ...
+                 YNRev, ...
+                 colour, ...
+                 'EdgeColor', 'none', ...
+                 'FaceAlpha', 0.2, ...
+                 'DisplayName', 'Noise' );
 
          
 % plot the bagged prediction
-pRef(1) = plot( XMeshPlot, ...
-             YLong, ...
-             'Color', lineMap(j,:), ...
-             'LineWidth', opt.plot.lineWidth, ...
-             'DisplayName', 'Surrogate Prediction' );
+pRef(1) = plot(  X, ...
+                 Y, ...
+                 'Color', colour, ...
+                 'LineWidth', 1, ...
+                 'DisplayName', 'Surrogate Prediction' );
+         
+         
+hold off;
+
+% set the axes' limits and tick values
+ylim( [3, 4.5] );
+ytickformat('%1.1f')
+ylabel( 'SM Loss (W\cdotkg^{-1})' );
+
+ax = gca;
+
+if strcmp( varDef.Type, 'categorical' )
+    xlim( [varDef.Limits(1)+0.01, varDef.Limits(2)-0.01] );
+    XTickNum = unique( round(X) );
+    ax.XTick = XTickNum;
+    xticklabels( varDef.Range );
+else
+    xlim( varDef.Limits );
+end
+
+xlabel( varDef.Descr );
+
+ax.Box = false;
+ax.TickDir = 'out';
+ax.LineWidth = 1;
+ax.FontName = 'Arial';
+ax.FontSize = 8;
+
+drawnow;
          
 end
 
-
-
-function pRef = plotFn2D( XMeshPlot, YLong, YOptMax, nPts, opt )
-
-
-YMesh = reshape( YLong, nPts(2), nPts(1) );
-
-switch opt.contourType
-    case 'Lines'
-        cRange = opt.lossLim(1):opt.contourStep:opt.lossLim(2);
-        [ cMatrix, cObj ] = contour( ...
-                             XMeshPlot(:,:,1), ...
-                             XMeshPlot(:,:,2), ...
-                             YMesh, ...
-                             cRange, ...
-                            'LineWidth', 1.5, ...
-                            'ShowText', 'on', ...
-                            'LabelSpacing', 4*72 );
-        cObj.LevelList = round( cObj.LevelList, 2);
-        clabel( cMatrix, cObj, 'Color', 'k', 'FontSize', 10 );
-
-    case 'Solid'
-        cRange = opt.lossLim(1):opt.contourStep:opt.lossLim(2);
-        [ cMatrix, cObj ] = contourf( ...
-                             XMeshPlot(:,:,1), ...
-                             XMeshPlot(:,:,2), ...
-                             YMesh, ...
-                             cRange, ...
-                            'LineWidth', 0.5, ...
-                            'ShowText', 'off', ...
-                            'LabelSpacing', 4*72 );
-        cBar = colorbar;
-        cBar.Label.String = opt.objectiveDescr;
-        cBar.Limits = opt.lossLim;
-        cBar.TickDirection = 'out';
-        cBar.Ticks = opt.lossLim(1):opt.lossLim(2);
-
-    case 'Optimum'
-        cRange = opt.lossLim(1):opt.contourStep:opt.lossLim(2);
-        [ ~, cObjFull ] = contour( ...
-                             XMeshPlot(:,:,1), ...
-                             XMeshPlot(:,:,2), ...
-                             YMesh, ...
-                             cRange, ...
-                            'LineWidth', 1.5, ...
-                            'ShowText', 'on', ...
-                            'LabelSpacing', 4*72 );
-
-        hold on;
-        %YOptMin = round( YOptMin/opt.contourStep ) ...
-        %                *opt.contourStep;
-        YOptMax = round( YOptMax/opt.contourStep ) ...
-                        *opt.contourStep;           
-        optRange = [YOptMax YOptMax];
-        [ ~, cObjOPt ] = contour( ...
-                             XMeshPlot(:,:,1), ...
-                             XMeshPlot(:,:,2), ...
-                             YMesh, ...
-                             optRange, ...
-                            'LineWidth', 4, ...
-                            'ShowText', 'on', ...
-                            'LabelSpacing', 4*72 );
-        cmap = parula(32);
-        plot( optimaPlot(1), optimaPlot(2), '*', ...
-                'MarkerEdgeColor', cmap(1,:), ...
-                'MarkerSize', 20, ...
-                'LineWidth', 2 );                                      
-
-end
-
-end
-
-
-end
 
  
 
