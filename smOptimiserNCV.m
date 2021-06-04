@@ -65,6 +65,7 @@ srch.XTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner*nSearch );
 srch.XTraceIndex = zeros( nOuter*nRepeats*nInner*nSearch, nParams );
 srch.YTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
 srch.ObjFnTimeTrace = zeros( nOuter*nRepeats*nInner*nSearch, 1 );
+srch.isValid = false( nOuter*nRepeats*nInner*nSearch, 1 );
 
 opt.XTrace = setupOptTable( paramDef, nOuter*nRepeats*nInner );
 opt.XTraceIndex = zeros( nOuter*nRepeats*nInner, nParams );
@@ -84,8 +85,14 @@ opt.XFinal = setupOptTable( paramDef, nOuter );
 opt.FitTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
 opt.PSOTimeTrace = zeros( nOuter*nRepeats*nInner, 1 );
 
+models.smModel = cell( nOuter, nRepeats );
+models.glmModel = cell( nOuter, 1 );
+models.glmModel2 = cell( nOuter, 1 );
+models.glmModelSelected = cell( nOuter, 1 );
+
 % initialise arrays recording diagnostics and results
 valResult = zeros( nOuter, 1 );
+
 
 % initialise counters
 a1 = 0;
@@ -113,10 +120,14 @@ for i = 1:nOuter
         
         disp(['Inner Repeat = ' num2str(j)]);
         
-        [ ~, ~, optOutput, srchOutput ] = smOptimiser( ...
+        [ ~, smModel, optOutput, srchOutput ] = ...
+                                            smOptimiser( ...
                                             objFcn, paramDef, setup, ...
                                             trnData, ...
                                             options );
+                                        
+        models.smModel{i,j} = compact( smModel );
+        
         % update counters
         a0 = a1 + 1;
         a1 = a1 + nInner*nSearch;
@@ -130,6 +141,7 @@ for i = 1:nOuter
         srch.XTraceIndex( a0:a1, : ) = srchOutput.XTraceIndex;
         srch.YTrace( a0:a1 ) = srchOutput.YTrace;
         srch.ObjFnTimeTrace( a0:a1 ) = srchOutput.objFnTimeTrace;
+        srch.isValid( a0:a1 ) = srchOutput.isValid;
         
         opt.XTrace( b0:b1, : ) = optOutput.XTrace;       
         opt.XTraceIndex( b0:b1, : ) = optOutput.XTraceIndex;
@@ -191,13 +203,25 @@ for i = 1:nOuter
                                     summaryFig, ...
                                     opt.Fold( modelIdx ) );
                                 
+    % fit a GLM model from the intermediate search observations
+    glmObs = a1-nRepeats*nInter*nSearch+1:a1;
+    glmObs = glmObs( srch.isValid( glmObs ) );
+    [ models.glmModel{i}, models.glmModelSelect{i} ] = ...
+                            generateGLM( srch.XTrace( glmObs, : ), ...
+                                         srch.YTrace( glmObs ) );
+
+                                
 end
+
+models.smModel = squeeze( models.smModel ); % if nRepeats == 1
 
 % assemble output structure
 output.estimate = mean( valResult );
 output.valFolds = valResult;
 output.optima = opt;
 output.search = srch;
+output.models = models;
+
 
 end
 
@@ -216,4 +240,18 @@ for i = 1:length(flds)
     end
 end
 
+end
+
+
+function [ mdl1, mdl2 ] = generateGLM( X, Y )
+
+glmData = [ X array2table(Y) ];
+
+glmData.Properties.VariableNames{ end } = 'Outcome';
+
+mdl1 = compact( fitglm( glmData ) );
+mdl2 = compact( stepwiseglm( glmData, 'linear', ...
+                                'Criterion', 'bic', ...
+                                'Verbose', 0 ) );
+                                
 end
