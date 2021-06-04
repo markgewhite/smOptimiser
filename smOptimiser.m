@@ -212,6 +212,7 @@ srch.YTrace = zeros( setup.nFit*setup.nSearch, 1 );
 srch.objFnTimeTrace = zeros( setup.nFit*setup.nSearch, 1 );
 srch.delta = zeros( setup.nFit*setup.nSearch, 1 );
 srch.nTries = zeros( setup.nFit*setup.nSearch, 1 );
+srch.isValid = false( setup.nFit*setup.nSearch, 1 );
 
 opt.XTrace = table( ...
                 'Size', [setup.nFit, nParams], ...
@@ -227,7 +228,6 @@ opt.maxLossTrace = zeros( setup.nFit, 1 );
 opt.fitTimeTrace = zeros( setup.nFit, 1 );
 opt.psoTimeTrace = zeros( setup.nFit, 1 );
 
-model = [];
 optionsPSO = optimoptions('particleswarm', ...
                             'Display', 'None', ...
                             'FunctionTolerance', setup.tolPSO, ...
@@ -243,6 +243,9 @@ else
     rndQ = 0;
 end
 
+model = [];
+nFnOut = nargout( objFn );
+constraint = 0;
 opt.maxLossTrace(1) = Inf;
 c = 0; 
 w = setup.window; 
@@ -274,22 +277,36 @@ for k = 1:setup.nFit
             % run the model for this set of parameters
             tic;
             if setup.noObjData && setup.noObjOptions
-                obs = objFn( params );
+                if nFnOut == 1
+                    obs = objFn( params );
+                else
+                    [ obs, constraint ] = objFn( params );
+                end
             elseif setup.noObjOptions
-                obs = objFn( params, data );
+                if nFnOut == 1
+                    obs = objFn( params, data );
+                else
+                    [ obs, constraint ] = objFn( params, data );
+                end
             else
-                obs = objFn( params, data, options );
+                if nFnOut == 1
+                    obs = objFn( params, data, options );
+                else
+                    [ obs, constraint ] = objFn( params, data, options );
+                end
             end
+            
             secondTry = true;
             
         end
 
         % record observation
-        c = c+1;
+        c = c + 1;
         srch.objFnTimeTrace( c ) = toc;
         srch.YTrace( c ) = min( obs, setup.cap );
         srch.XTrace( c, : ) = params;
         srch.XTraceIndex( c, : ) = indices;
+        srch.isValid( c ) = all( constraint <= 0 );
         srch.delta( c ) = delta;
         srch.nTries( c ) = nTries;
         if j == 1 && k > 1
