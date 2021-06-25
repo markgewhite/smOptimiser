@@ -80,6 +80,11 @@ if ~isfield( setup, 'transform' )
     setup.transform = true; % default
 end
 
+if ~isfield( setup, 'compact' )
+    setup.compact = false; % default
+end
+
+
 % get dimensions
 [nObs, nVar] = size( XTrace );
 
@@ -102,20 +107,30 @@ if nVar ~= length( varDef )
     error('The number optimizable variables (varDef) does not match the XTrace');
 end
 
-
-
 if setup.showPlots
     
     % setup the layout of the plots
     switch setup.layout
         case 'square'
             [ plotRows, plotCols ] = sqdim( nVar );
+            setup.position = 1:nVar;
         case 'vertical'
             plotRows = nVar;
             plotCols = 1;
+            setup.position = 1:nVar;
         case 'horizontal'
             plotRows = 1;
             plotCols = nVar;
+            setup.position = 1:nVar;
+        case 'vertical-adaptive'
+            if ~isfield( setup, 'position' )
+                error('No positioning list included within setup for vertical-adaptive');
+            end
+            plotRows = length( setup.position );
+            plotCols = 1;
+            setup.position = setup.position( setup.position~=0 );
+        otherwise
+            error('Unrecognised setup.layout');
     end
     
     if isempty( figRef )
@@ -151,7 +166,10 @@ nPts = 401;
 for i = 1:nVar
     
     varName = XTrace.Properties.VariableNames{i};
-    
+    if setup.showPlots
+        k = setup.position(i); % subplot/figure ID
+    end
+        
     if strcmpi( varDef(i).Type, 'categorical' )
         
         % categorical variable       
@@ -167,12 +185,12 @@ for i = 1:nVar
         if setup.showPlots
             if setup.useSubPlots
                 figure( figRef );
-                subplot( plotRows, plotCols, i );
+                subplot( plotRows, plotCols, k );
             else
-                figure( figRef(i) );
+                figure( figRef(k) );
             end
             if nGroups == 1
-                plotFreq( XTrace, varDef(i) );
+                plotFreq( XTrace, varDef(i), setup.compact );
             else
                 plotLayeredFreq( XTrace, varDef(i) );
             end
@@ -207,12 +225,12 @@ for i = 1:nVar
         if setup.showPlots
             if setup.useSubPlots
                 figure( figRef );
-                subplot( plotRows, plotCols, i );
+                subplot( plotRows, plotCols, k );
             else
-                figure( figRef(i) );
+                figure( figRef(k) );
             end
             if nGroups == 1
-                plotPDF( YAll, varDef(i), XFit, YTotal );
+                plotPDF( YAll, varDef(i), XFit, YTotal, setup.compact );
             else
                 plotLayeredPDF( XTrace, varDef(i), YTotal );
             end
@@ -229,7 +247,7 @@ XFreq = XFreq( :, 1:end-1 );
 end
 
 
-function plotFreq( X, varDef )
+function plotFreq( X, varDef, isCompact )
  
     % set colour
     colour = [0 0.4470 0.7410];
@@ -283,15 +301,38 @@ function plotFreq( X, varDef )
     barObj(2).CData = highlight;
     barObj(2).EdgeColor = colour;
     
-    xticklabels( varDef.Range );
-    xlabel( attr.XLabel );   
-    ylabel( 'Proportion (%)' );
+    % add labels
+    if isCompact
+        
+        % only use initials
+        nLabels = length( varDef.Range );
+        labels = strings( nLabels, 1 );
+        for i = 1:nLabels
+            labels(i) = initials( varDef.Range{i} );
+        end
+        fontSize = 6;
+        axWidth = 0.5;
+        axYLabel = 'Proportion';
+        
+    else
+        
+        labels = varDef.Range;
+        fontSize = 8;
+        axWidth = 1;
+        axYLabel = 'Proportion (%)';
+
+    end
     
+    xticklabels( labels );
+    xlabel( attr.XLabel );   
+    ylabel( axYLabel );
+    
+    % finish formatting
     set( gca, 'Box', false' );
     set( gca, 'TickDir', 'out' );
-    set( gca, 'LineWidth', 1 );
+    set( gca, 'LineWidth', axWidth );
     set( gca, 'FontName', 'Arial' );
-    set( gca, 'FontSize', 8 );
+    set( gca, 'FontSize', fontSize );
     
     drawnow;
     
@@ -354,7 +395,7 @@ function plotLayeredFreq( X, varDef )
 end
 
 
-function plotPDF( Y, varDef, XFit, YTotal )
+function plotPDF( Y, varDef, XFit, YTotal, isCompact )
 
     % set colour
     colour = [0 0.4470 0.7410];
@@ -381,19 +422,33 @@ function plotPDF( Y, varDef, XFit, YTotal )
     hold on;
     [ ~, peakID ] = max(Y);
     XPeak = XPlot( peakID );
-    plot( [XPeak, XPeak], [0, Y(peakID)], ...
-                'Color', highlight, 'LineWidth', 2 );
-    peakLabelX = XPlot( peakID+5 );
-    peakLabelY = 1.8;
-    switch varDef.Type
-        case 'integer'
-            peakLabel = num2str( XPeak, '%1.0f' );
-        case 'real'
-            peakLabel = num2str( XPeak, '%1.2f' );
+    if isCompact
+        
+        plot( [XPeak, XPeak], [0, Y(peakID)], ...
+                'Color', highlight, 'LineWidth', 1 );
+        fontSize = 6;
+        axWidth = 0.5;
+        axYLabel = 'Density';
+    
+    else     
+        plot( [XPeak, XPeak], [0, Y(peakID)], ...
+                    'Color', highlight, 'LineWidth', 2 );
+        peakLabelX = XPlot( peakID+5 );
+        peakLabelY = 1.8;
+        switch varDef.Type
+            case 'integer'
+                peakLabel = num2str( XPeak, '%1.0f' );
+            case 'real'
+                peakLabel = num2str( XPeak, '%1.2f' );
+        end
+        text( peakLabelX, peakLabelY, peakLabel, ...
+                    'FontName', 'Arial', ...
+                    'FontSize', 8 );
+        fontSize = 8;
+        axWidth = 1;
+        axYLabel = 'Prob. Density \times10^3';
+                
     end
-    text( peakLabelX, peakLabelY, peakLabel, ...
-                'FontName', 'Arial', ...
-                'FontSize', 8 );
                   
     % set limits
     xlim( attr.XLim );
@@ -401,13 +456,13 @@ function plotPDF( Y, varDef, XFit, YTotal )
         
     % label axes
     xlabel( attr.XLabel );
-    ylabel( 'Prob. Density (\times10^3)' );
+    ylabel( axYLabel );
     
     set( gca, 'Box', false' );
     set( gca, 'TickDir', 'out' );
-    set( gca, 'LineWidth', 1 );
+    set( gca, 'LineWidth', axWidth );
     set( gca, 'FontName', 'Arial' );
-    set( gca, 'FontSize', 8 );
+    set( gca, 'FontSize', fontSize );
     
     drawnow;
 
@@ -480,3 +535,11 @@ function colourRGB = getColours
     end 
 
 end
+
+
+
+
+
+
+
+
